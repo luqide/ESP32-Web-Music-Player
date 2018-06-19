@@ -11,10 +11,10 @@
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
 
-#define PIN_CLK 5
-#define PIN_MOSI 18
- //#define PIN_MISO  //not needed
-#define PIN_RST 19
+#define PIN_CLK 33
+#define PIN_MOSI 32
+#define PIN_MISO  -1 //not used
+#define PIN_RST 23
 #define PIN_DC 21
 //#define PIN_BCKL
 
@@ -22,11 +22,27 @@
 //but less overhead for setting up / finishing transfers. Make sure 240 is dividable by this.
 #define PARALLEL_LINES 16
 
+#define ILI9341_INVON 0x21
+#define ILI9341_INVOFF 0x20
+#define ILI9341_PAGESET 0x2B
+#define ILI9341_COLSET 0x2A
+#define ILI9341_MEMWR 0x2C
+
+#define LCD_HEIGHT 240
+#define LCD_WIDTH 320
+
 typedef struct {
-    uint8_t cmd;
-    uint8_t data[16];
-    uint8_t databytes; //No of data in data; bit 7 = delay after set; 0xFF = end of cmds.
+  uint8_t cmd;
+  uint8_t data[16];
+  uint8_t databytes; //No of data in data; bit 7 = delay after set; 0xFF = end of cmds.
 } lcd_init_cmd_t;
+
+typedef struct {
+  uint8_t r;
+  uint8_t g;
+  uint8_t b;
+} color_t;
+
 
 DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     /* Power contorl B, power control = 0, DC_ENA = 1 */
@@ -58,7 +74,7 @@ DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     /* VCOM control 2, VCOMH=VMH-2, VCOML=VML-2 */
     {0xC7, {0xBE}, 1},
     /* Memory access contorl, MX=MY=0, MV=1, ML=0, BGR=1, MH=0 */
-    {0x36, {0x28}, 1},
+    {0x36, {0xE8}, 1},
     /* Pixel format, 16bits/pixel for RGB/MCU interface */
     {0x3A, {0x55}, 1},
     /* Frame rate control, f=fosc, 70Hz fps */
@@ -92,7 +108,18 @@ void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd);
 void lcd_data(spi_device_handle_t spi, const uint8_t *data, int len);
 void lcd_spi_pre_transfer_callback(spi_transaction_t *t);
 void lcd_init(spi_device_handle_t spi);
-static void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata);
-static void send_line_finish(spi_device_handle_t spi);
+void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata);
+void send_line_finish(spi_device_handle_t spi);
+
+void send_area(spi_device_handle_t spi, int x0, int x1, int y0, int y1, uint16_t *data);
+void send_area_finish(spi_device_handle_t spi);
+
+uint16_t color_to_uint(color_t color);
+uint16_t bgr_to_uint(uint8_t b, uint8_t g, uint8_t r);
+
+void invert_display(spi_device_handle_t spi, bool inv);
+void lcd_fill(spi_device_handle_t spi, uint16_t color);
+
+void drawChar(spi_device_handle_t spi, int x, int y, char c, uint16_t fcolor, uint16_t bcolor);
 
 #endif
