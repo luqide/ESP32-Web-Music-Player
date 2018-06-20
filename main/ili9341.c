@@ -5,6 +5,12 @@
 
 #include "ili9341.h"
 
+void _swap_int16_t(int a, int b) {
+  int tmp = a;
+  a = b;
+  b = tmp;
+}
+
 //Send a command to the LCD. Uses spi_device_transmit, which waits until the transfer is complete.
 void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd) {
   esp_err_t ret;
@@ -70,8 +76,7 @@ void lcd_init(spi_device_handle_t spi) {
 //before sending the line data itself; a total of 6 transactions. (We can't put all of this in just one transaction
 //because the D/C line needs to be toggled in the middle.)
 //This routine queues these commands up so they get sent as quickly as possible.
-void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata) {
-  assert(ypos >= 0 && ypos <= LCD_HEIGHT);
+void lcd_display(spi_device_handle_t spi) {
   esp_err_t ret;
   int x;
   //Transaction descriptors. Declared static so they're not allocated on the stack; we need this memory even when this
@@ -96,16 +101,16 @@ void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata) {
   trans[0].tx_data[0]=0x2A;           //Column Address Set
   trans[1].tx_data[0]=0;              //Start Col High
   trans[1].tx_data[1]=0;              //Start Col Low
-  trans[1].tx_data[2]=(320)>>8;       //End Col High
-  trans[1].tx_data[3]=(320)&0xff;     //End Col Low
+  trans[1].tx_data[2]=LCD_WIDTH>>8;       //End Col High
+  trans[1].tx_data[3]=LCD_WIDTH&0xff;     //End Col Low
   trans[2].tx_data[0]=0x2B;           //Page address set
-  trans[3].tx_data[0]=ypos>>8;        //Start page high
-  trans[3].tx_data[1]=ypos&0xff;      //start page low
-  trans[3].tx_data[2]=(ypos+PARALLEL_LINES)>>8;    //end page high
-  trans[3].tx_data[3]=(ypos+PARALLEL_LINES)&0xff;  //end page low
+  trans[3].tx_data[0]=0;        //Start page high
+  trans[3].tx_data[1]=0;      //start page low
+  trans[3].tx_data[2]=LCD_HEIGHT>>8;    //end page high
+  trans[3].tx_data[3]=LCD_HEIGHT&0xff;  //end page low
   trans[4].tx_data[0]=0x2C;           //memory write
-  trans[5].tx_buffer=linedata;        //finally send the line data
-  trans[5].length=320*2*8*PARALLEL_LINES;          //Data length, in bits
+  trans[5].tx_buffer=vBuffer;        //finally send the line data
+  trans[5].length=LCD_WIDTH*2*8*LCD_HEIGHT;          //Data length, in bits
   trans[5].flags=0; //undo SPI_TRANS_USE_TXDATA flag
 
   //Queue all transactions.
@@ -120,7 +125,7 @@ void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata) {
   //send_line_finish, which will wait for the transfers to be done and check their status.
 }
 
-void send_line_finish(spi_device_handle_t spi) {
+void lcd_display_finish(spi_device_handle_t spi) {
   spi_transaction_t *rtrans;
   esp_err_t ret;
   //Wait for all 6 transactions to be done and get back the results.
@@ -146,69 +151,349 @@ void invert_display(spi_device_handle_t spi, bool inv) {
   lcd_cmd(spi, inv ? ILI9341_INVON : ILI9341_INVOFF);
 }
 
-void send_area(spi_device_handle_t spi, int x0, int x1, int y0, int y1, uint16_t *data) {
-  esp_err_t ret;
-  int x;
-  //Transaction descriptors. Declared static so they're not allocated on the stack; we need this memory even when this
-  //function is finished because the SPI driver needs access to it even while we're already calculating the next line.
-  static spi_transaction_t trans[6];
 
-  //In theory, it's better to initialize trans and data only once and hang on to the initialized
-  //variables. We allocate them on the stack, so we need to re-init them each call.
-  for (x=0; x<6; x++) {
-      memset(&trans[x], 0, sizeof(spi_transaction_t));
-      if ((x&1)==0) {
-          //Even transfers are commands
-          trans[x].length=8;
-          trans[x].user=(void*)0;
-      } else {
-          //Odd transfers are data
-          trans[x].length=8*4;
-          trans[x].user=(void*)1;
+void lcd_fill(uint16_t color) {
+  memset(vBuffer, color, sizeof(vBuffer));
+}
+
+void drawPixel(int x, int y, uint16_t color) {
+  vBuffer[y * LCD_WIDTH + x] = color;
+//  lcd_display(spi); //should refresh manually
+}
+
+void drawLine(int x0, int x1, int y0, int y1, uint16_t color) {
+    int steep = abs(y1 - y0) > abs(x1 - x0);
+    if (steep) {
+        _swap_int16_t(x0, y0);
+        _swap_int16_t(x1, y1);
+    }
+
+    if (x0 > x1) {
+        _swap_int16_t(x0, x1);
+        _swap_int16_t(y0, y1);
+    }
+
+    int dx, dy;
+    dx = x1 - x0;
+    dy = abs(y1 - y0);
+
+    int err = dx / 2;
+    int ystep;
+
+    if (y0 < y1) {
+        ystep = 1;
+    } else {
+        ystep = -1;
+    }
+
+    for (; x0<=x1; x0++) {
+        if (steep) {
+            drawPixel(y0, x0, color);
+        } else {
+            drawPixel(x0, y0, color);
+        }
+        err -= dy;
+        if (err < 0) {
+            y0 += ystep;
+            err += dx;
+        }
+    }
+}
+
+void drawFastVLine(int x, int y, int h, uint16_t color) {
+  drawLine(x, x, y, y+h-1, color);
+}
+
+void drawFastHLine(int x, int y, int w, uint16_t color) {
+  drawLine(x, x+w-1, y, y, color);
+}
+
+void fillRect(int x, int y, int w, int h, uint16_t color) {
+    for (int i=x; i<x+w; i++) {
+        drawFastVLine(i, y, h, color);
+    }
+}
+
+// Draw a circle outline
+void drawCircle(int x0, int y0, int r, uint16_t color) {
+    int f = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x = 0;
+    int y = r;
+
+    drawPixel(x0  , y0+r, color);
+    drawPixel(x0  , y0-r, color);
+    drawPixel(x0+r, y0  , color);
+    drawPixel(x0-r, y0  , color);
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f += ddF_x;
+
+        drawPixel(x0 + x, y0 + y, color);
+        drawPixel(x0 - x, y0 + y, color);
+        drawPixel(x0 + x, y0 - y, color);
+        drawPixel(x0 - x, y0 - y, color);
+        drawPixel(x0 + y, y0 + x, color);
+        drawPixel(x0 - y, y0 + x, color);
+        drawPixel(x0 + y, y0 - x, color);
+        drawPixel(x0 - y, y0 - x, color);
+    }
+}
+
+void drawCircleHelper( int x0, int y0, int r, uint8_t cornername, uint16_t color) {
+    int f     = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x     = 0;
+    int y     = r;
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f     += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f     += ddF_x;
+        if (cornername & 0x4) {
+            drawPixel(x0 + x, y0 + y, color);
+            drawPixel(x0 + y, y0 + x, color);
+        }
+        if (cornername & 0x2) {
+            drawPixel(x0 + x, y0 - y, color);
+            drawPixel(x0 + y, y0 - x, color);
+        }
+        if (cornername & 0x8) {
+            drawPixel(x0 - y, y0 + x, color);
+            drawPixel(x0 - x, y0 + y, color);
+        }
+        if (cornername & 0x1) {
+            drawPixel(x0 - y, y0 - x, color);
+            drawPixel(x0 - x, y0 - y, color);
+        }
+    }
+}
+
+// Used to do circles and roundrects
+void fillCircleHelper(int x0, int y0, int r, uint8_t cornername, int delta, uint16_t color) {
+
+    int f     = 1 - r;
+    int ddF_x = 1;
+    int ddF_y = -2 * r;
+    int x     = 0;
+    int y     = r;
+
+    while (x<y) {
+        if (f >= 0) {
+            y--;
+            ddF_y += 2;
+            f     += ddF_y;
+        }
+        x++;
+        ddF_x += 2;
+        f     += ddF_x;
+
+        if (cornername & 0x1) {
+            drawFastVLine(x0+x, y0-y, 2*y+1+delta, color);
+            drawFastVLine(x0+y, y0-x, 2*x+1+delta, color);
+        }
+        if (cornername & 0x2) {
+            drawFastVLine(x0-x, y0-y, 2*y+1+delta, color);
+            drawFastVLine(x0-y, y0-x, 2*x+1+delta, color);
+        }
+    }
+}
+
+void fillCircle(int x0, int y0, int r, uint16_t color) {
+    drawFastVLine(x0, y0-r, 2*r+1, color);
+    fillCircleHelper(x0, y0, r, 3, 0, color);
+}
+
+// Draw a rectangle
+void drawRect(int x, int y, int w, int h, uint16_t color) {
+    drawFastHLine(x, y, w, color);
+    drawFastHLine(x, y+h-1, w, color);
+    drawFastVLine(x, y, h, color);
+    drawFastVLine(x+w-1, y, h, color);
+}
+
+// Draw a rounded rectangle
+void drawRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
+    // smarter version
+    drawFastHLine(x+r  , y    , w-2*r, color); // Top
+    drawFastHLine(x+r  , y+h-1, w-2*r, color); // Bottom
+    drawFastVLine(x    , y+r  , h-2*r, color); // Left
+    drawFastVLine(x+w-1, y+r  , h-2*r, color); // Right
+    // draw four corners
+    drawCircleHelper(x+r    , y+r    , r, 1, color);
+    drawCircleHelper(x+w-r-1, y+r    , r, 2, color);
+    drawCircleHelper(x+w-r-1, y+h-r-1, r, 4, color);
+    drawCircleHelper(x+r    , y+h-r-1, r, 8, color);
+}
+
+// Fill a rounded rectangle
+void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color) {
+    // smarter version
+    fillRect(x+r, y, w-2*r, h, color);
+
+    // draw four corners
+    fillCircleHelper(x+w-r-1, y+r, r, 1, h-2*r-1, color);
+    fillCircleHelper(x+r    , y+r, r, 2, h-2*r-1, color);
+}
+
+// Draw a triangle
+void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color) {
+    drawLine(x0, x1, y0, y1, color);
+    drawLine(x1, x2, y1, y2, color);
+    drawLine(x2, x2, y2, y0, color);
+}
+
+// Fill a triangle
+void fillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color) {
+
+    int a, b, y, last;
+
+    // Sort coordinates by Y order (y2 >= y1 >= y0)
+    if (y0 > y1) {
+        _swap_int16_t(y0, y1); _swap_int16_t(x0, x1);
+    }
+    if (y1 > y2) {
+        _swap_int16_t(y2, y1); _swap_int16_t(x2, x1);
+    }
+    if (y0 > y1) {
+        _swap_int16_t(y0, y1); _swap_int16_t(x0, x1);
+    }
+
+    if(y0 == y2) { // Handle awkward all-on-same-line case as its own thing
+        a = b = x0;
+        if(x1 < a)      a = x1;
+        else if(x1 > b) b = x1;
+        if(x2 < a)      a = x2;
+        else if(x2 > b) b = x2;
+        drawFastHLine(a, y0, b-a+1, color);
+        return;
+    }
+
+    int
+    dx01 = x1 - x0,
+    dy01 = y1 - y0,
+    dx02 = x2 - x0,
+    dy02 = y2 - y0,
+    dx12 = x2 - x1,
+    dy12 = y2 - y1;
+    int32_t
+    sa   = 0,
+    sb   = 0;
+
+    // For upper part of triangle, find scanline crossings for segments
+    // 0-1 and 0-2.  If y1=y2 (flat-bottomed triangle), the scanline y1
+    // is included here (and second loop will be skipped, avoiding a /0
+    // error there), otherwise scanline y1 is skipped here and handled
+    // in the second loop...which also avoids a /0 error here if y0=y1
+    // (flat-topped triangle).
+    if(y1 == y2) last = y1;   // Include y1 scanline
+    else         last = y1-1; // Skip it
+
+    for(y=y0; y<=last; y++) {
+        a   = x0 + sa / dy01;
+        b   = x0 + sb / dy02;
+        sa += dx01;
+        sb += dx02;
+        /* longhand:
+        a = x0 + (x1 - x0) * (y - y0) / (y1 - y0);
+        b = x0 + (x2 - x0) * (y - y0) / (y2 - y0);
+        */
+        if(a > b) _swap_int16_t(a,b);
+        drawFastHLine(a, y, b-a+1, color);
+    }
+
+    // For lower part of triangle, find scanline crossings for segments
+    // 0-2 and 1-2.  This loop is skipped if y1=y2.
+    sa = dx12 * (y - y1);
+    sb = dx02 * (y - y0);
+    for(; y<=y2; y++) {
+        a   = x1 + sa / dy12;
+        b   = x0 + sb / dy02;
+        sa += dx12;
+        sb += dx02;
+        /* longhand:
+        a = x1 + (x2 - x1) * (y - y1) / (y2 - y1);
+        b = x0 + (x2 - x0) * (y - y0) / (y2 - y0);
+        */
+        if(a > b) _swap_int16_t(a,b);
+        drawFastHLine(a, y, b-a+1, color);
+    }
+}
+
+// BITMAP / XBITMAP / GRAYSCALE / RGB BITMAP FUNCTIONS ---------------------
+
+// Draw a PROGMEM-resident 1-bit image at the specified (x,y) position,
+// using the specified foreground color (unset bits are transparent).
+void drawBitmap_1bit(int x, int y, const uint8_t bitmap[], int w, int h, uint16_t color) {
+
+    int byteWidth = (w + 7) / 8; // Bitmap scanline pad = whole byte
+    uint8_t byte = 0;
+
+    for(int j=0; j<h; j++, y++) {
+        for(int i=0; i<w; i++) {
+            if(i & 7) byte <<= 1;
+            else      byte   = bitmap[j * byteWidth + i / 8];
+            if(byte & 0x80) drawPixel(x+i, y, color);
+        }
       }
-      trans[x].flags=SPI_TRANS_USE_TXDATA;
-  }
-  trans[0].tx_data[0]=0x2A;           //Column Address Set
-  trans[1].tx_data[0]=x0 >> 8;              //Start Col High
-  trans[1].tx_data[1]=x0 && 0xff;              //Start Col Low
-  trans[1].tx_data[2]=(x1 ) >> 8;       //End Col High
-  trans[1].tx_data[3]=(x1 ) & 0xff;     //End Col Low
-  trans[2].tx_data[0]=0x2B;           //Page address set
-  trans[3].tx_data[0]=y0 >> 8;        //Start page high
-  trans[3].tx_data[1]=y0 & 0xff;      //start page low
-  trans[3].tx_data[2]=(y1 ) >> 8;    //end page high
-  trans[3].tx_data[3]=(y1 ) & 0xff;  //end page low
-  trans[4].tx_data[0]=0x2C;           //memory write
-  trans[5].tx_buffer=data;        //finally send the line data
-  trans[5].length=(x1 - x0 + 1)*2*8*(y1 - y0 + 1);          //Data length, in bits
-  trans[5].flags=0; //undo SPI_TRANS_USE_TXDATA flag
-
-  //Queue all transactions.
-  for (x=0; x<6; x++) {
-    ret=spi_device_queue_trans(spi, &trans[x], portMAX_DELAY);
-    assert(ret==ESP_OK);
-  }
 }
-void send_area_finish(spi_device_handle_t spi) {
-  spi_transaction_t *rtrans;
-  esp_err_t ret;
-  //Wait for all 6 transactions to be done and get back the results.
-  for (int x=0; x<6; x++) {
-      ret=spi_device_get_trans_result(spi, &rtrans, portMAX_DELAY);
-      assert(ret==ESP_OK);
-      //We could inspect rtrans now if we received any info back. The LCD is treated as write-only, though.
+
+void drawRGBBitmap(int x, int y, uint16_t *bitmap, int w, int h) {
+  for(int j=0; j<h; j++, y++) {
+      for(int i=0; i<w; i++ ) {
+          drawPixel(x+i, y, bitmap[j * w + i]);
+      }
   }
 }
 
-void lcd_fill(spi_device_handle_t spi, uint16_t color) {
-  uint16_t data[320];
-  for (int i = 0; i < 320; ++i) data[i] = color;
-  for (int y = 0; y <= 241; ++y) {
-    if(y != 0) send_area_finish(spi);
-    send_area(spi, 0, 320, y, y, data);
+void drawChar(int x, int y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size) {
+  c -= gfxFont->first;
+  GFXglyph *glyph  = &((gfxFont->glyph)[c]);
+  uint8_t  *bitmap = gfxFont->bitmap;
+
+  uint16_t bo = glyph->bitmapOffset;
+  uint8_t  w  = glyph->width,
+           h  = glyph->height;
+  int8_t   xo = glyph->xOffset,
+           yo = glyph->yOffset;
+  uint8_t  xx, yy, bits = 0, bit = 0;
+  int16_t  xo16 = 0, yo16 = 0;
+
+  if(size > 1) {
+      xo16 = xo;
+      yo16 = yo;
+  }
+
+  for(yy=0; yy<h; yy++) {
+      for(xx=0; xx<w; xx++) {
+          if(!(bit++ & 7)) {
+              bits = bitmap[bo++];
+          }
+          if(bits & 0x80) {
+              if(size == 1) {
+                  drawPixel(x+xo+xx, y+yo+yy, color);
+              } else {
+                  fillRect(y+(yo16+yy)*size, x+(xo16+xx)*size,
+                    size, size, color);
+              }
+          }
+          bits <<= 1;
+      }
   }
 }
 
-void drawChar(spi_device_handle_t spi, int x, int y, char c, uint16_t fcolor, uint16_t bcolor) {
-
-}
+//void write()

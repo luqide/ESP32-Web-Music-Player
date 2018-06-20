@@ -31,6 +31,8 @@
 #define LCD_HEIGHT 240
 #define LCD_WIDTH 320
 
+static uint16_t vBuffer[LCD_HEIGHT * LCD_WIDTH];
+
 typedef struct {
   uint8_t cmd;
   uint8_t data[16];
@@ -43,6 +45,26 @@ typedef struct {
   uint8_t b;
 } color_t;
 
+typedef struct { // Data stored PER GLYPH
+	uint16_t bitmapOffset;     // Pointer into GFXfont->bitmap
+	uint8_t  width, height;    // Bitmap dimensions in pixels
+	uint8_t  xAdvance;         // Distance to advance cursor (x axis)
+	int8_t   xOffset, yOffset; // Dist from cursor pos to UL corner
+} GFXglyph;
+
+typedef struct { // Data stored for FONT AS A WHOLE:
+	uint8_t  *bitmap;      // Glyph bitmaps, concatenated
+	GFXglyph *glyph;       // Glyph array
+	uint8_t   first, last; // ASCII extents
+	uint8_t   yAdvance;    // Newline distance (y axis)
+} GFXfont;
+
+#include "FreeMono9pt7b.h"
+
+static uint8_t cursor_x = 0;
+static uint8_t cursor_y = 6;
+static uint8_t textsize;
+static GFXfont *gfxFont = &FreeMono9pt7b;
 
 DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     /* Power contorl B, power control = 0, DC_ENA = 1 */
@@ -108,18 +130,31 @@ void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd);
 void lcd_data(spi_device_handle_t spi, const uint8_t *data, int len);
 void lcd_spi_pre_transfer_callback(spi_transaction_t *t);
 void lcd_init(spi_device_handle_t spi);
-void send_lines(spi_device_handle_t spi, int ypos, uint16_t *linedata);
-void send_line_finish(spi_device_handle_t spi);
-
-void send_area(spi_device_handle_t spi, int x0, int x1, int y0, int y1, uint16_t *data);
-void send_area_finish(spi_device_handle_t spi);
+void lcd_display(spi_device_handle_t spi);
 
 uint16_t color_to_uint(color_t color);
 uint16_t bgr_to_uint(uint8_t b, uint8_t g, uint8_t r);
 
 void invert_display(spi_device_handle_t spi, bool inv);
-void lcd_fill(spi_device_handle_t spi, uint16_t color);
+void lcd_fill(uint16_t color);
 
-void drawChar(spi_device_handle_t spi, int x, int y, char c, uint16_t fcolor, uint16_t bcolor);
+void drawPixel(int x, int y, uint16_t color);
+void drawLine(int x0, int x1, int y0, int y1, uint16_t color);
+void drawFastVLine(int x, int y, int h, uint16_t color);
+void drawFastHLine(int x, int y, int w, uint16_t color);
+void fillRect(int x, int y, int w, int h, uint16_t color);
+void drawCircle(int x0, int y0, int r, uint16_t color);
+void drawCircleHelper( int x0, int y0, int r, uint8_t cornername, uint16_t color);
+void fillCircleHelper(int x0, int y0, int r, uint8_t cornername, int delta, uint16_t color);
+void fillCircle(int x0, int y0, int r, uint16_t color);
+void drawRect(int x, int y, int w, int h, uint16_t color);
+void drawRoundRect(int x, int y, int w, int h, int r, uint16_t color);
+void fillRoundRect(int x, int y, int w, int h, int r, uint16_t color);
+void drawTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color);
+void fillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color);
+void drawBitmap_1bit(int x, int y, const uint8_t bitmap[], int w, int h, uint16_t color);
+void drawRGBBitmap(int x, int y, uint16_t *bitmap, int w, int h);
+void drawChar(int x, int y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size);
+void setCursor(int x, int y)
 
 #endif
