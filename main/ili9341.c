@@ -496,4 +496,51 @@ void drawChar(int x, int y, unsigned char c, uint16_t color, uint16_t bg, uint8_
   }
 }
 
-//void write()
+void setCursor(int x, int y) {
+  if(x < 0 || y < 0 || x >= LCD_WIDTH || y >= LCD_HEIGHT)
+    return;
+  cursor_x = x;
+  cursor_y = y;
+}
+
+void setTextsize(int size) {
+  textsize = size > 0 ? size : 1;
+}
+
+void setTextcolor(uint16_t c) {
+  textcolor = c;
+}
+
+void setTextBgcolor(uint16_t c) {
+  textbgcolor = c;
+}
+
+void setTextwrap(bool w) {
+  wrap = w;
+}
+
+void write(char c) {
+  if(c == '\n') {
+      cursor_x  = 0;
+      cursor_y += (int16_t)textsize * (gfxFont->yAdvance);
+  } else if(c != '\r') {
+      uint8_t first = gfxFont->first;
+      if((c >= first) && (c <= gfxFont->last)) {
+          GFXglyph *glyph = &((gfxFont->glyph)[c - first]);
+          uint8_t   w     = glyph->width,
+                    h     = glyph->height;
+          if((w > 0) && (h > 0)) { // Is there an associated bitmap?
+              if(wrap && ((cursor_x + textsize * ((glyph->xOffset) + w)) >= LCD_WIDTH)) {
+                  write('\n');
+              }
+              drawChar(cursor_x, cursor_y, c, textcolor, textbgcolor, textsize);
+          }
+          cursor_x += glyph->xAdvance * (int16_t)textsize;
+      }
+  }
+}
+
+void writeString(char *str) {
+  for(int i = 0; i < strlen(str); ++i)
+    write(str[i]);
+}

@@ -62,9 +62,12 @@ typedef struct { // Data stored for FONT AS A WHOLE:
 #include "FreeMono9pt7b.h"
 
 static uint8_t cursor_x = 0;
-static uint8_t cursor_y = 6;
+static uint8_t cursor_y = 0;
 static uint8_t textsize;
 static GFXfont *gfxFont = &FreeMono9pt7b;
+static bool wrap = 0;
+static uint16_t textcolor;
+static uint16_t textbgcolor;
 
 DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     /* Power contorl B, power control = 0, DC_ENA = 1 */
@@ -155,6 +158,12 @@ void fillTriangle(int x0, int y0, int x1, int y1, int x2, int y2, uint16_t color
 void drawBitmap_1bit(int x, int y, const uint8_t bitmap[], int w, int h, uint16_t color);
 void drawRGBBitmap(int x, int y, uint16_t *bitmap, int w, int h);
 void drawChar(int x, int y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size);
-void setCursor(int x, int y)
+void setCursor(int x, int y);
+void setTextsize(int size);
+void setTextcolor(uint16_t c);
+void setTextBgcolor(uint16_t c);
+void setTextwrap(bool w);
+void write(char c);
+void writeString(char *str);
 
 #endif
