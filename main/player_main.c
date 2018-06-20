@@ -23,7 +23,7 @@ void app_main() {
     .sclk_io_num = PIN_CLK,
     .quadwp_io_num = -1,
     .quadhd_io_num = -1,
-    .max_transfer_sz = PARALLEL_LINES * 320 * 2 + 8
+    .max_transfer_sz = LCD_HEIGHT * LCD_WIDTH * 2 + 8
   };
   spi_device_interface_config_t devcfg = {
     .clock_speed_hz = 33 * 1000 * 1000,
@@ -37,10 +37,14 @@ void app_main() {
   ESP_ERROR_CHECK(ret);
   printf("ILI9341 init\n");
   lcd_init(spi);
+  lcd_fill(bgr_to_uint(0, 0, 0));
+  lcd_display(spi);
   srand(time((void*)NULL));
   while(1) {
-    lcd_fill(spi, bgr_to_uint(rand() % 256, rand() % 256, rand() % 256));
-    vTaskDelay(1000 / portTICK_RATE_MS);
+    uint16_t c = bgr_to_uint(rand() % 256, rand() % 256, rand() % 256);
+    drawChar(159, 119, 'A', c, bgr_to_uint(0, 0, 0), 2);
+    lcd_display(spi);
+    //vTaskDelay(500 / portTICK_RATE_MS);
   }
 
 }
