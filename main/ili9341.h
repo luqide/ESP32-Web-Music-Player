@@ -31,7 +31,6 @@
 #define LCD_HEIGHT 240
 #define LCD_WIDTH 320
 
-static uint16_t vBuffer[LCD_HEIGHT * LCD_WIDTH];
 
 typedef struct {
   uint8_t cmd;
@@ -44,6 +43,8 @@ typedef struct {
   uint8_t g;
   uint8_t b;
 } color_t;
+
+spi_device_handle_t spi;
 
 typedef struct { // Data stored PER GLYPH
 	uint16_t bitmapOffset;     // Pointer into GFXfont->bitmap
@@ -98,7 +99,7 @@ DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     {0xC5, {0x35, 0x3E}, 2},
     /* VCOM control 2, VCOMH=VMH-2, VCOML=VML-2 */
     {0xC7, {0xBE}, 1},
-    /* Memory access contorl, MX=MY=0, MV=1, ML=0, BGR=1, MH=0 */
+    /* Memory access contorl, MX=MY=1, MV=0, ML=0, BGR=1, MH=0 */
     {0x36, {0xE8}, 1},
     /* Pixel format, 16bits/pixel for RGB/MCU interface */
     {0x3A, {0x55}, 1},
@@ -129,19 +130,19 @@ DRAM_ATTR static const lcd_init_cmd_t lcd_init_cmds[] = {
     {0, {0}, 0xff},
 };
 
-void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd);
-void lcd_data(spi_device_handle_t spi, const uint8_t *data, int len);
+void lcd_cmd(const uint8_t cmd);
+void lcd_data(const uint8_t *data, int len);
 void lcd_spi_pre_transfer_callback(spi_transaction_t *t);
-void lcd_init(spi_device_handle_t spi);
-void lcd_display(spi_device_handle_t spi);
+void lcd_init();
 
 uint16_t color_to_uint(color_t color);
 uint16_t bgr_to_uint(uint8_t b, uint8_t g, uint8_t r);
 
-void invert_display(spi_device_handle_t spi, bool inv);
+void invert_display(bool inv);
+static void send_lines(int ypos, uint16_t *linedata);
+static void send_line_finish();
 void lcd_fill(uint16_t color);
-
-void drawPixel(int x, int y, uint16_t color);
+void drawPixel(int x0, int y0, uint16_t color);
 void drawLine(int x0, int x1, int y0, int y1, uint16_t color);
 void drawFastVLine(int x, int y, int h, uint16_t color);
 void drawFastHLine(int x, int y, int w, uint16_t color);
@@ -163,7 +164,7 @@ void setTextsize(int size);
 void setTextcolor(uint16_t c);
 void setTextBgcolor(uint16_t c);
 void setTextwrap(bool w);
-void write(char c);
+void writeChar(char c);
 void writeString(char *str);
 
 #endif

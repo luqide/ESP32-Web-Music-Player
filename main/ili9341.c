@@ -4,6 +4,7 @@
 */
 
 #include "ili9341.h"
+//IRAM_ATTR uint16_t vBuffer[LCD_HEIGHT * LCD_WIDTH];
 
 void _swap_int16_t(int a, int b) {
   int tmp = a;
@@ -12,7 +13,7 @@ void _swap_int16_t(int a, int b) {
 }
 
 //Send a command to the LCD. Uses spi_device_transmit, which waits until the transfer is complete.
-void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd) {
+void lcd_cmd(const uint8_t cmd) {
   esp_err_t ret;
   spi_transaction_t t;
   memset(&t, 0, sizeof(t));       //Zero out the transaction
@@ -24,7 +25,7 @@ void lcd_cmd(spi_device_handle_t spi, const uint8_t cmd) {
 }
 
 //Send data to the LCD. Uses spi_device_transmit, which waits until the transfer is complete.
-void lcd_data(spi_device_handle_t spi, const uint8_t *data, int len) {
+void lcd_data(const uint8_t *data, int len) {
   esp_err_t ret;
   spi_transaction_t t;
   if (len==0) return;             //no need to send anything
@@ -44,7 +45,7 @@ void lcd_spi_pre_transfer_callback(spi_transaction_t *t) {
 }
 
 
-void lcd_init(spi_device_handle_t spi) {
+void lcd_init() {
   int cmd = 0;
 
   //Initialize non-SPI GPIOs
@@ -60,8 +61,8 @@ void lcd_init(spi_device_handle_t spi) {
 
   //Send all the commands
   while (lcd_init_cmds[cmd].databytes!=0xff) {
-      lcd_cmd(spi, lcd_init_cmds[cmd].cmd);
-      lcd_data(spi, lcd_init_cmds[cmd].data, lcd_init_cmds[cmd].databytes&0x1F);
+      lcd_cmd(lcd_init_cmds[cmd].cmd);
+      lcd_data(lcd_init_cmds[cmd].data, lcd_init_cmds[cmd].databytes&0x1F);
       if (lcd_init_cmds[cmd].databytes&0x80) {
           vTaskDelay(100 / portTICK_RATE_MS);
       }
@@ -72,11 +73,18 @@ void lcd_init(spi_device_handle_t spi) {
   //gpio_set_level(PIN_BCKL, 0);
 }
 
-//To send a set of lines we have to send a command, 2 data bytes, another command, 2 more data bytes and another command
-//before sending the line data itself; a total of 6 transactions. (We can't put all of this in just one transaction
-//because the D/C line needs to be toggled in the middle.)
-//This routine queues these commands up so they get sent as quickly as possible.
-void lcd_display(spi_device_handle_t spi) {
+
+uint16_t color_to_uint(color_t color) {
+  uint16_t ret = ((color.r & 0xF8) << 8) | ((color.g & 0xFC) << 3) | ((color.b & 0xF8) >> 3);
+  return (ret>>8) | (ret << 8);
+}
+
+uint16_t bgr_to_uint(uint8_t b, uint8_t g, uint8_t r) {
+  uint16_t ret = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
+  return (ret>>8) | (ret << 8);
+}
+
+static void send_lines(int ypos, uint16_t *linedata) {
   esp_err_t ret;
   int x;
   //Transaction descriptors. Declared static so they're not allocated on the stack; we need this memory even when this
@@ -101,16 +109,16 @@ void lcd_display(spi_device_handle_t spi) {
   trans[0].tx_data[0]=0x2A;           //Column Address Set
   trans[1].tx_data[0]=0;              //Start Col High
   trans[1].tx_data[1]=0;              //Start Col Low
-  trans[1].tx_data[2]=LCD_WIDTH>>8;       //End Col High
-  trans[1].tx_data[3]=LCD_WIDTH&0xff;     //End Col Low
+  trans[1].tx_data[2]=(320)>>8;       //End Col High
+  trans[1].tx_data[3]=(320)&0xff;     //End Col Low
   trans[2].tx_data[0]=0x2B;           //Page address set
-  trans[3].tx_data[0]=0;        //Start page high
-  trans[3].tx_data[1]=0;      //start page low
-  trans[3].tx_data[2]=LCD_HEIGHT>>8;    //end page high
-  trans[3].tx_data[3]=LCD_HEIGHT&0xff;  //end page low
+  trans[3].tx_data[0]=ypos>>8;        //Start page high
+  trans[3].tx_data[1]=ypos&0xff;      //start page low
+  trans[3].tx_data[2]=(ypos+PARALLEL_LINES)>>8;    //end page high
+  trans[3].tx_data[3]=(ypos+PARALLEL_LINES)&0xff;  //end page low
   trans[4].tx_data[0]=0x2C;           //memory write
-  trans[5].tx_buffer=vBuffer;        //finally send the line data
-  trans[5].length=LCD_WIDTH*2*8*LCD_HEIGHT;          //Data length, in bits
+  trans[5].tx_buffer=linedata;        //finally send the line data
+  trans[5].length=320*2*8*PARALLEL_LINES;          //Data length, in bits
   trans[5].flags=0; //undo SPI_TRANS_USE_TXDATA flag
 
   //Queue all transactions.
@@ -125,7 +133,8 @@ void lcd_display(spi_device_handle_t spi) {
   //send_line_finish, which will wait for the transfers to be done and check their status.
 }
 
-void lcd_display_finish(spi_device_handle_t spi) {
+
+static void send_line_finish() {
   spi_transaction_t *rtrans;
   esp_err_t ret;
   //Wait for all 6 transactions to be done and get back the results.
@@ -136,29 +145,65 @@ void lcd_display_finish(spi_device_handle_t spi) {
   }
 }
 
-uint16_t color_to_uint(color_t color) {
-  uint16_t ret = ((color.r & 0xF8) << 8) | ((color.g & 0xFC) << 3) | ((color.b & 0xF8) >> 3);
-  return (ret>>8) | (ret << 8);
+void invert_display(bool inv) {
+  lcd_cmd(inv ? ILI9341_INVON : ILI9341_INVOFF);
 }
 
-uint16_t bgr_to_uint(uint8_t b, uint8_t g, uint8_t r) {
-  uint16_t ret = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | ((b & 0xF8) >> 3);
-  return (ret>>8) | (ret << 8);
+void drawPixel(int x0, int y0, uint16_t color) {
+  esp_err_t ret;
+  int x;
+  //Transaction descriptors. Declared static so they're not allocated on the stack; we need this memory even when this
+  //function is finished because the SPI driver needs access to it even while we're already calculating the next line.
+  static spi_transaction_t trans[6];
+
+  //In theory, it's better to initialize trans and data only once and hang on to the initialized
+  //variables. We allocate them on the stack, so we need to re-init them each call.
+  for (x=0; x<6; x++) {
+      memset(&trans[x], 0, sizeof(spi_transaction_t));
+      if ((x&1)==0) {
+          //Even transfers are commands
+          trans[x].length=8;
+          trans[x].user=(void*)0;
+      } else {
+          //Odd transfers are data
+          trans[x].length=8*4;
+          trans[x].user=(void*)1;
+      }
+      trans[x].flags=SPI_TRANS_USE_TXDATA;
+  }
+  trans[0].tx_data[0] = 0x2A;           //Column Address Set
+  trans[1].tx_data[0] = x0 >> 8;              //Start Col High
+  trans[1].tx_data[1] = x0;              //Start Col Low
+  trans[1].tx_data[2] = x0 >> 8;       //End Col High
+  trans[1].tx_data[3] = x0;     //End Col Low
+  trans[2].tx_data[0] = 0x2B;           //Page address set
+  trans[3].tx_data[0] = y0 >> 8;        //Start page high
+  trans[3].tx_data[1] = y0;      //start page low
+  trans[3].tx_data[2] = y0 >> 8;    //end page high
+  trans[3].tx_data[3] = y0;  //end page low
+  trans[4].tx_data[0] = 0x2C;           //memory write
+  trans[5].tx_data[0] = color >> 8;
+  trans[5].tx_data[1] = color;
+  trans[5].length = 8 * 2;
+
+  spi_transaction_t *rtrans;
+  for (x=0; x<6; x++) {
+      ret=spi_device_queue_trans(spi, &trans[x], portMAX_DELAY);
+      assert(ret==ESP_OK);
+      ret=spi_device_get_trans_result(spi, &rtrans, portMAX_DELAY);
+      assert(ret==ESP_OK);
+  }
+
 }
-
-
-void invert_display(spi_device_handle_t spi, bool inv) {
-  lcd_cmd(spi, inv ? ILI9341_INVON : ILI9341_INVOFF);
-}
-
 
 void lcd_fill(uint16_t color) {
-  memset(vBuffer, color, sizeof(vBuffer));
-}
-
-void drawPixel(int x, int y, uint16_t color) {
-  vBuffer[y * LCD_WIDTH + x] = color;
-//  lcd_display(spi); //should refresh manually
+  uint16_t *data = heap_caps_malloc(320*PARALLEL_LINES*sizeof(uint16_t), MALLOC_CAP_DMA);
+  assert(data != NULL);
+  memset(data, color, 320*PARALLEL_LINES*sizeof(uint16_t));
+  for (int y = 0; y < 240; y += PARALLEL_LINES) {
+    if(y != 0) send_line_finish();
+    send_lines(y, data);
+  }
 }
 
 void drawLine(int x0, int x1, int y0, int y1, uint16_t color) {
@@ -467,8 +512,7 @@ void drawChar(int x, int y, unsigned char c, uint16_t color, uint16_t bg, uint8_
 
   uint16_t bo = glyph->bitmapOffset;
   uint8_t  w  = glyph->width,
-           h  = glyph->height;
-  int8_t   xo = glyph->xOffset,
+           h  = glyph->height;  int8_t   xo = glyph->xOffset,
            yo = glyph->yOffset;
   uint8_t  xx, yy, bits = 0, bit = 0;
   int16_t  xo16 = 0, yo16 = 0;
@@ -519,20 +563,20 @@ void setTextwrap(bool w) {
   wrap = w;
 }
 
-void write(char c) {
+void writeChar(char c) {
   if(c == '\n') {
       cursor_x  = 0;
-      cursor_y += (int16_t)textsize * (gfxFont->yAdvance);
+      cursor_y += textsize * (gfxFont->yAdvance);
   } else if(c != '\r') {
       uint8_t first = gfxFont->first;
       if((c >= first) && (c <= gfxFont->last)) {
           GFXglyph *glyph = &((gfxFont->glyph)[c - first]);
           uint8_t   w     = glyph->width,
                     h     = glyph->height;
-          if((w > 0) && (h > 0)) { // Is there an associated bitmap?
-              if(wrap && ((cursor_x + textsize * ((glyph->xOffset) + w)) >= LCD_WIDTH)) {
-                  write('\n');
-              }
+          if((w > 0) && (h > 0)) {
+              // if((cursor_x + (int16_t)textsize * (glyph->xAdvance + w)) >= LCD_WIDTH) {
+              //   writeChar('\n');
+              // }
               drawChar(cursor_x, cursor_y, c, textcolor, textbgcolor, textsize);
           }
           cursor_x += glyph->xAdvance * (int16_t)textsize;
@@ -541,6 +585,7 @@ void write(char c) {
 }
 
 void writeString(char *str) {
-  for(int i = 0; i < strlen(str); ++i)
-    write(str[i]);
+  for(int i = 0; i < strlen(str); ++i) {
+    writeChar(str[i]);
+  }
 }
