@@ -7,6 +7,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
+#include "esp_err.h"
+#include "esp_log.h"
 #include "driver/spi_master.h"
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
@@ -31,7 +33,7 @@
 #define LCD_HEIGHT 240
 #define LCD_WIDTH 320
 
-
+static const char *Tag_ili = "ILI9341";
 typedef struct {
   uint8_t cmd;
   uint8_t data[16];

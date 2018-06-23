@@ -71,6 +71,9 @@ void lcd_init() {
 
   //Enable backlight
   //gpio_set_level(PIN_BCKL, 0);
+
+
+  ESP_LOGI(Tag_ili, "Initialized.");
 }
 
 
