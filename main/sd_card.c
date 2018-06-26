@@ -1,5 +1,6 @@
 #include "sd_card.h"
 
+static const char *TAG = "sdcard";
 esp_err_t sdmmc_mount(sdmmc_card_t *card) {
   ESP_LOGI(TAG, "Initializing SD Card");
 

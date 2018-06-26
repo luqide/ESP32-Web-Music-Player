@@ -12,8 +12,6 @@
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
 
-static const char *TAG = "sdcard";
-
 esp_err_t sdmmc_mount(sdmmc_card_t *card);
 esp_err_t sdmmc_unmount();
 #endif
