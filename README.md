@@ -9,6 +9,6 @@ Todo:
 - [ ]图形库 -> 界面库
 - [x] microSD卡驱动
 - [ ]按键处理
-- [x ]I2S DAC驱动
+- [x]I2S DAC驱动
 - [ ]mp3解码
 - [ ]网易云音乐API
