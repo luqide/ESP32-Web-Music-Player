@@ -27,6 +27,7 @@ size_t readProps(FILE *file, wavProperties_t *wavProps){
 }
 
 esp_err_t wavPlay(FILE *wavFile) {
+  double multiplier = pow(10, volume / 20.0);
   gpio_set_level(PIN_PD, 0);
   vTaskDelay(10 / portTICK_RATE_MS);
 
@@ -95,17 +96,10 @@ esp_err_t wavPlay(FILE *wavFile) {
         /* after processing wav file, it is time to process music data */
         case DATA: {
           int bytes = wavProps.bitsPerSample / 8 * 2 * 100;
-          uint8_t *data = malloc(bytes);
+          int16_t *data = malloc(bytes);
           n = readNBytes(wavFile, data, bytes);
-          for(int i = 0; i < bytes; i += 2) {
-            double multiplier = pow(10, volume / 20.0);
-            int16_t sample = 0;
-            sample |= (data[i] & 0xff);
-            sample <<= 8;
-            sample |= data[i+1];
-            sample *= multiplier;
-            data[i] = (sample >> 8) & 0xff;
-            data[i + 1] = sample & 0xff;
+          for(int i = 0; i < bytes / 2; i ++) {
+            data[i] *= multiplier;
           }
           i2s_write(i2s_num, data, bytes, &n, 100);
           free(data);

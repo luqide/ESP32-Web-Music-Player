@@ -80,10 +80,10 @@ void app_main() {
     printf("%s\n", entry->d_name);
   }
 
-  FILE *wavFile = fopen("/sdcard/HIS_TH~1.WAV", "rb");
+  FILE *wavFile = fopen("/sdcard/怪盗V-Tension.WAV", "rb");
   if(wavFile != NULL)  {
     printf("Wav File Opened.\n");
-    setVolume(0);
+    setVolume(-25);
     wavPlay(wavFile);
 
     fclose(wavFile);

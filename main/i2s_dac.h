@@ -10,6 +10,8 @@
 #include "esp_log.h"
 #include "math.h"
 
+#define MIN_VOL_OFFSET -50
+
 #define CCCC(c1, c2, c3, c4)    ((c4 << 24) | (c3 << 16) | (c2 << 8) | c1)
 #define PIN_PD 16
 /* these are data structures to process wav file */
