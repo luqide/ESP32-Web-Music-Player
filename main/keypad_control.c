@@ -29,6 +29,7 @@ void keyPinInit() {
 
 void taskScanKey(void *patameter) {
 	while(1) {
+//		ESP_LOGI(TAG, "task stack: %d", uxTaskGetStackHighWaterMark(NULL));
 		for(int i = 0; i < 5; ++i) {
 			if(keyStats[i] != gpio_get_level(key_pins[i])) {
 				vTaskDelay(20 / portTICK_RATE_MS);
