@@ -5,16 +5,32 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "stdio.h"
+#include "stdlib.h"
+#include "time.h"
 #include "driver/i2s.h"
 #include "soc/io_mux_reg.h"
 #include "esp_log.h"
 #include "math.h"
+#include "string.h"
 
 #define MIN_VOL_OFFSET -50
 
 #define CCCC(c1, c2, c3, c4)    ((c4 << 24) | (c3 << 16) | (c2 << 8) | c1)
 #define PIN_PD 4
 
+#define PLAYMODE_REPEAT 0
+#define PLAYMODE_REPEAT_PLAYLIST 1
+#define PLAYMODE_PLAYLIST 2
+#define PLAYMODE_RANDOM 3
+
+typedef enum {
+    NONE = 0, WAV, MP3, APE, FLAC
+} musicType_t;
+
+typedef struct {
+    char filePath[512];
+    void *priv, *next;
+} playlist_t;  
 /* these are data structures to process wav file */
 typedef enum {
     HEADER_RIFF, HEADER_FMT, HEADER_DATA, DATA
@@ -24,6 +40,11 @@ typedef struct {
     bool paused;
     uint16_t totalTime;
     uint16_t currentTime;
+    char nowPlaying[512];
+    int playMode;
+    int volume; //0 - 100%
+    double volumeMultiplier;
+    musicType_t musicType;
 } playerState_t;
 
 typedef struct {
@@ -46,15 +67,15 @@ typedef struct {
 
 //i2s configuration
 static i2s_config_t i2s_config = {
-     .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
-     .sample_rate = 44100,
-     .bits_per_sample = 16,
-     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-     .communication_format = I2S_COMM_FORMAT_I2S,
-     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // high interrupt priority
-     .dma_buf_count = 8,
-     .dma_buf_len = 64,   //Interrupt level 1
-     .use_apll = true,
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = 44100,
+    .bits_per_sample = 16,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+    .communication_format = I2S_COMM_FORMAT_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // high interrupt priority
+    .dma_buf_count = 128,
+    .dma_buf_len = 64,   //Interrupt level 1
+    .use_apll = true,
 //     .fixed_mclk = 11289600
 };
 
@@ -77,4 +98,9 @@ esp_err_t i2s_init();
 esp_err_t i2s_deinit();
 void dac_mute(bool m);
 void player_pause(bool p);
+void parseMusicType();
+int getMusicType();
+void setNowPlaying(char *str);
+bool isPaused();
+FILE* musicFileOpen();
 #endif

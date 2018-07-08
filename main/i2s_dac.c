@@ -3,12 +3,20 @@
 static const char *TAG = "I2S_DAC";
 headerState_t state = HEADER_RIFF;
 wavProperties_t wavProps;
+playlist_t playlist = {
+  .priv = NULL
+};
+
 playerState_t playerState = {
   .paused = true,
   .totalTime = 0,
   .currentTime = 0,
+  .nowPlaying = "",
+  .playMode = PLAYMODE_PLAYLIST,
+  .volume = 50,
+  .volumeMultiplier = pow(10, -25 / 20.0),
+  .musicType = NONE
 };
-int volume = -25;
 
 
 size_t read4bytes(FILE *file, uint32_t *chunkId){
@@ -32,11 +40,10 @@ size_t readProps(FILE *file, wavProperties_t *wavProps){
 }
 
 esp_err_t wavPlay(FILE *wavFile) {
-  double multiplier = pow(10, volume / 20.0);
-
   if(wavFile != NULL) {
     int fSize;
     size_t n;
+    long count;
     fseek(wavFile , 0 , SEEK_END);
     fSize = ftell (wavFile);
     printf("File size: %.2f MBytes\n", (double)fSize / 1024.0 / 1024.0);
@@ -92,13 +99,19 @@ esp_err_t wavPlay(FILE *wavFile) {
         break;
         /* after processing wav file, it is time to process music data */
         case DATA: {
-          if(playerState.paused == true) ESP_LOGI(TAG, "Paused.");
+//          ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
+          if(playerState.paused == true) {
+            ESP_LOGI(TAG, "Paused.");
+            dac_mute(true);
+          }
           while(playerState.paused == true);
-          int bytes = wavProps.bitsPerSample / 8 * 2 * 100;
+          dac_mute(false);
+
+          int bytes = wavProps.bitsPerSample / 8 * 2 * 768;
           int16_t *data = malloc(bytes);
           n = readNBytes(wavFile, data, bytes);
           for(int i = 0; i < bytes / 2; i ++) {
-            data[i] *= multiplier;
+            data[i] *= playerState.volumeMultiplier;
           }
           i2s_write(i2s_num, data, bytes, &n, 100);
           free(data);
@@ -115,7 +128,8 @@ esp_err_t wavPlay(FILE *wavFile) {
 }
 
 void setVolume(int vol) {
-  volume = vol;
+  playerState.volume = vol;
+  playerState.volumeMultiplier = pow(10, (MIN_VOL_OFFSET + vol / 2) / 20.0);
 }
 
 esp_err_t i2s_init() {
@@ -124,6 +138,7 @@ esp_err_t i2s_init() {
   i2s_set_pin((i2s_port_t)i2s_num, &pin_config);
   REG_WRITE(PIN_CTRL, 0xFFFFFFF0);
   PIN_FUNC_SELECT(GPIO_PIN_REG_0, 1);
+  memset(playerState.nowPlaying, 0, sizeof(playerState.nowPlaying));
   return ESP_OK;
 }
 
@@ -144,4 +159,43 @@ void dac_mute(bool m) {
 
 void player_pause(bool p) {
   playerState.paused = p;
+}
+
+void parseMusicType() {
+  char typeName[8];
+  int len = strlen(playerState.nowPlaying);
+  if(len < 5) {
+    playerState.musicType = NONE;
+    return;
+  }
+  memset(typeName, 0, sizeof(typeName));
+  for(int i = 0; i < 4; ++i)
+    typeName[i] = playerState.nowPlaying[len  - (4 - i)];
+
+//  printf("%s\n", typeName);
+  if((!strcmp(typeName, ".wav")) | (!strcmp(typeName, ".WAV")))
+    playerState.musicType = WAV;
+  else if((!strcmp(typeName, ".mp3")) | (!strcmp(typeName, ".MP3")))
+    playerState.musicType = MP3;
+  else if((!strcmp(typeName, ".ape")) | (!strcmp(typeName, ".APE")))
+    playerState.musicType = APE;
+  else if((!strcmp(typeName, "flac")) | (!strcmp(typeName, ".flac")))
+    playerState.musicType = FLAC;
+  else playerState.musicType = NONE;
+}
+
+void setNowPlaying(char *str) {
+  strcpy(playerState.nowPlaying, str);
+}
+
+int getMusicType() {
+  return playerState.musicType;
+}
+
+bool isPaused() {
+  return playerState.paused;
+}
+
+FILE* musicFileOpen() {
+  return fopen(playerState.nowPlaying, "rb");
 }
