@@ -74,7 +74,7 @@ uint8_t	font_forceFixed = 0;
 uint8_t	text_wrap = 0;			// character wrapping to new line
 color_t	_fg = {  0, 255,   0};
 color_t _bg = {  0,   0,   0};
-uint8_t image_debug = 1;
+uint8_t image_debug = 0;
 
 float _angleOffset = DEFAULT_ANGLE_OFFSET;
 

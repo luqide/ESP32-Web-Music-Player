@@ -121,13 +121,9 @@ void app_main() {
   ESP_ERROR_CHECK(ret);
   disp_spi = spi;
 
-  
-
   TFT_display_init();
   TFT_setclipwin(0, 0, 320, 240);
-  //TFT_fillRect(0, 0, 320, 240, TFT_WHITE);
-
-  
+  TFT_fillRect(0, 24, 320, 216, TFT_WHITE);
 
   //WiFi Init
   nvs_flash_init();
