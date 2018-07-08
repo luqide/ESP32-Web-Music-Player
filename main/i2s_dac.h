@@ -13,11 +13,18 @@
 #define MIN_VOL_OFFSET -50
 
 #define CCCC(c1, c2, c3, c4)    ((c4 << 24) | (c3 << 16) | (c2 << 8) | c1)
-#define PIN_PD 16
+#define PIN_PD 4
+
 /* these are data structures to process wav file */
 typedef enum {
     HEADER_RIFF, HEADER_FMT, HEADER_DATA, DATA
 } headerState_t;
+
+typedef struct {
+    bool paused;
+    uint16_t totalTime;
+    uint16_t currentTime;
+} playerState_t;
 
 typedef struct {
     uint32_t chunkID;
@@ -66,5 +73,8 @@ size_t readRiff(FILE *file, wavRiff_t *wavRiff);
 size_t readProps(FILE *file, wavProperties_t *wavProps);
 esp_err_t wavPlay(FILE *wavFile);
 void setVolume(int vol);
-
+esp_err_t i2s_init();
+esp_err_t i2s_deinit();
+void dac_mute(bool m);
+void player_pause(bool p);
 #endif
