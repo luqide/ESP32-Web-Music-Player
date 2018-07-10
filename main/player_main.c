@@ -27,6 +27,7 @@
 #include "i2s_dac.h"
 #include "ui.h"
 #include "keypad_control.h"
+#include "mp3dec.h"
 
 static EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
@@ -65,6 +66,7 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event) {
 TaskHandle_t keyHandle = NULL; 
 TaskHandle_t playerHandle = NULL;
 TaskHandle_t uiHandle = NULL;
+TaskHandle_t batHandle = NULL;
 
 void app_main() {
   esp_err_t ret;
@@ -91,43 +93,43 @@ void app_main() {
     } else {
         ESP_LOGE(TAG, "Failed to initialize SPIFFS (%d)", ret);
     }
-    return 0;
+    return;
   }
 
-  vTaskDelay(1000 / portTICK_RATE_MS);
+//  vTaskDelay(1000 / portTICK_RATE_MS);
 
 
-  TFT_PinsInit();
-  //initialize spi bus
-  spi_lobo_bus_config_t buscfg = {
-    .miso_io_num = PIN_NUM_MISO,
-    .mosi_io_num = PIN_NUM_MOSI,
-    .sclk_io_num = PIN_NUM_CLK,
-    .quadwp_io_num = -1,
-    .quadhd_io_num = -1,
-    .max_transfer_sz = 240*320*2*8,
-  };
+  // TFT_PinsInit();
+  // //initialize spi bus
+  // spi_lobo_bus_config_t buscfg = {
+  //   .miso_io_num = PIN_NUM_MISO,
+  //   .mosi_io_num = PIN_NUM_MOSI,
+  //   .sclk_io_num = PIN_NUM_CLK,
+  //   .quadwp_io_num = -1,
+  //   .quadhd_io_num = -1,
+  //   .max_transfer_sz = 240*320*2*8,
+  // };
 
-  spi_lobo_device_interface_config_t lcd_devcfg = {
-      .clock_speed_hz=30000000,                // Initial clock out at 8 MHz
-      .mode=0,                                // SPI mode 0
-      .spics_io_num=-1,                       // we will use external CS pin
-    .spics_ext_io_num=PIN_NUM_CS,           // external CS pin
-    .flags=LB_SPI_DEVICE_HALFDUPLEX,        // ALWAYS SET  to HALF DUPLEX MODE!! for display spi
-  };
+  // spi_lobo_device_interface_config_t lcd_devcfg = {
+  //     .clock_speed_hz=30000000,                // Initial clock out at 8 MHz
+  //     .mode=0,                                // SPI mode 0
+  //     .spics_io_num=-1,                       // we will use external CS pin
+  //   .spics_ext_io_num=PIN_NUM_CS,           // external CS pin
+  //   .flags=LB_SPI_DEVICE_HALFDUPLEX,        // ALWAYS SET  to HALF DUPLEX MODE!! for display spi
+  // };
 
-  spi_lobo_device_handle_t spi;
-  ret = spi_lobo_bus_add_device(VSPI_HOST, &buscfg, &lcd_devcfg, &spi);
-  ESP_ERROR_CHECK(ret);
-  disp_spi = spi;
+  // spi_lobo_device_handle_t spi;
+  // ret = spi_lobo_bus_add_device(VSPI_HOST, &buscfg, &lcd_devcfg, &spi);
+  // ESP_ERROR_CHECK(ret);
+  // disp_spi = spi;
 
-  TFT_display_init();
-  TFT_setclipwin(0, 0, 320, 240);
-  TFT_fillRect(0, 24, 320, 216, TFT_WHITE);
+  // TFT_display_init();
+  // TFT_setclipwin(0, 0, 320, 240);
 
   //WiFi Init
   nvs_flash_init();
   tcpip_adapter_init();
+  tcpip_adapter_set_hostname(TCPIP_ADAPTER_IF_STA, "mPlayer");
   wifi_event_group = xEventGroupCreate();
   ESP_ERROR_CHECK(esp_event_loop_init(wifi_event_handler, NULL));
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -149,9 +151,17 @@ void app_main() {
   //keypad init
   keyPinInit();
   ESP_ERROR_CHECK(keyQueueCreate());
-  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",3000,NULL,(portPRIVILEGE_BIT | 2),&keyHandle,1) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",3000,NULL,(portPRIVILEGE_BIT | 3),&keyHandle,1) == pdPASS) 
     ESP_LOGI(TAG, "KeyScan task created.");
   else ESP_LOGE(TAG, "Failed to create KeyScan task.");
+  //battery task init
+  if(xTaskCreatePinnedToCore(taskBattery,"BATTERY",3000,NULL,(portPRIVILEGE_BIT | 2),&batHandle,1) == pdPASS) 
+    ESP_LOGI(TAG, "Battery voltage scanning task created.");
+  else ESP_LOGE(TAG, "Failed to create Battery voltage scanning task.");
+
+  // if(xTaskCreatePinnedToCore(taskUI_Char,"UI",4096,NULL,(portPRIVILEGE_BIT | 2),&uiHandle,1) == pdPASS) 
+  //   ESP_LOGI(TAG, "UI_Char task created.");
+  // else ESP_LOGE(TAG, "Failed to create UI_Char task.");
 
   //sdcard init
   sdmmc_card_t card;
@@ -160,14 +170,17 @@ void app_main() {
   //i2s init
   i2s_init();
 
-  setNowPlaying("/sdcard/WAV/无题 - 陈亮.wav");
+  setNowPlaying("/sdcard/MP3/无题 - 陈亮.mp3");
   player_pause(false);
+  dac_mute(false);
 
+
+  FILE *musicFile = NULL;
   while(1) {
     if(isPaused() == false) { 
       parseMusicType();
       if(getMusicType() != NONE) {
-        FILE *musicFile = musicFileOpen();
+        musicFile = musicFileOpen();
         if(musicFile == NULL) {
           ESP_LOGE(TAG, "Failed to open music file.");
           player_pause(true);
@@ -179,7 +192,7 @@ void app_main() {
               wavPlay(musicFile);
               break;
             case MP3:
-              
+              mp3Play(musicFile);
               break;
             case APE:
               break;

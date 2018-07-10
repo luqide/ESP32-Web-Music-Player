@@ -1,11 +1,49 @@
+#define CONFIG_AUDIO_HELIX
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "stdio.h"
+#include "stdlib.h"
+#include "time.h"
+#include "sys/stat.h"
+#include "driver/i2s.h"
+#include "soc/io_mux_reg.h"
+#include "esp_log.h"
+#include "math.h"
+#include "ui.h"
+#include "string.h"
+
+#include "mp3dec.h"
+
 #include "i2s_dac.h"
 
-static const char *TAG = "I2S_DAC";
+static const char *TAG = "CODEC";
 headerState_t state = HEADER_RIFF;
 wavProperties_t wavProps;
-playlist_t playlist = {
-  .priv = NULL
+
+//i2s configuration
+i2s_config_t i2s_config = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX),
+    .sample_rate = 44100,
+    .bits_per_sample = 16,
+    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
+    .communication_format = I2S_COMM_FORMAT_I2S,
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // high interrupt priority
+    .dma_buf_count = 128,
+    .dma_buf_len = 64,   //Interrupt level 1
+    .use_apll = true,
+//     .fixed_mclk = 11289600
 };
+
+i2s_pin_config_t pin_config = {
+    .bck_io_num = 26, //this is BCK pin
+    .ws_io_num = 25, // this is LRCK pin
+    .data_out_num = 22, // this is DATA output pin
+    .data_in_num = -1   //Not used
+};
+
+int i2s_num = 0; // i2s port number
 
 playerState_t playerState = {
   .paused = true,
@@ -41,12 +79,12 @@ size_t readProps(FILE *file, wavProperties_t *wavProps){
 
 esp_err_t wavPlay(FILE *wavFile) {
   if(wavFile != NULL) {
-    int fSize;
-    size_t n;
+    size_t n, fSize;
     long count;
     fseek(wavFile , 0 , SEEK_END);
     fSize = ftell (wavFile);
-    printf("File size: %.2f MBytes\n", (double)fSize / 1024.0 / 1024.0);
+    ESP_LOGI(TAG, "Wav play");
+    ESP_LOGI(TAG, "File size: %.2f MBytes\n", (double)fSize / 1024.0 / 1024.0);
     state = HEADER_RIFF;
     rewind(wavFile);
     while(ftell(wavFile) != fSize) {
@@ -54,21 +92,19 @@ esp_err_t wavPlay(FILE *wavFile) {
         case HEADER_RIFF: {
           wavRiff_t wavRiff;
           n = readRiff(wavFile, &wavRiff);
-          if(n == 12){
-            if(wavRiff.chunkID == CCCC('R', 'I', 'F', 'F') && wavRiff.format == CCCC('W', 'A', 'V', 'E')){
+            if(n == 12 && wavRiff.chunkID == CCCC('R', 'I', 'F', 'F') 
+                && wavRiff.format == CCCC('W', 'A', 'V', 'E'))
               state = HEADER_FMT;
-              ESP_LOGI(TAG, "HEADER_RIFF");
-            }
-          }
         }
         break;
         case HEADER_FMT: {
           n = readProps(wavFile, &wavProps);
-          if(n == 24){
+          if(n == 24)
             state = HEADER_DATA;
-          }
-          printf("SampleRate: %i\nByteRate: %i\nBitsPerSample: %i\n", (int)wavProps.sampleRate, (int)wavProps.byteRate, (int)wavProps.bitsPerSample);
-
+          ESP_LOGI(TAG, "SampleRate: %i ByteRate: %i BitsPerSample: %i ", 
+            (int)wavProps.sampleRate, 
+            (int)wavProps.byteRate, 
+            (int)wavProps.bitsPerSample);
         }
         break;
         case HEADER_DATA: {
@@ -86,7 +122,6 @@ esp_err_t wavPlay(FILE *wavFile) {
                 }
               }
             }
-
           }
           n = read4bytes(wavFile, &chunkSize);
           if(n == 4){
@@ -99,14 +134,14 @@ esp_err_t wavPlay(FILE *wavFile) {
         break;
         /* after processing wav file, it is time to process music data */
         case DATA: {
-//          ESP_LOGI(TAG, "RAM left %d", esp_get_free_heap_size());
           if(playerState.paused == true) {
             ESP_LOGI(TAG, "Paused.");
-            dac_mute(true);
+            i2s_zero_dma_buffer(0);
+            // dac_mute(true);
+            while(playerState.paused == true);
+            ESP_LOGI(TAG, "Continued.");
           }
-          while(playerState.paused == true);
-          dac_mute(false);
-
+          // dac_mute(false);
           int bytes = wavProps.bitsPerSample / 8 * 2 * 768;
           int16_t *data = malloc(bytes);
           n = readNBytes(wavFile, data, bytes);
@@ -124,6 +159,7 @@ esp_err_t wavPlay(FILE *wavFile) {
     ESP_LOGE(TAG, "Failed to read wav file.");
     return ESP_FAIL;
   }
+  fclose(wavFile);
   return ESP_OK;
 }
 
@@ -198,4 +234,114 @@ bool isPaused() {
 
 FILE* musicFileOpen() {
   return fopen(playerState.nowPlaying, "rb");
+}
+
+int getVolumePercentage() {
+  return playerState.volume;
+}
+
+
+void mp3Play(FILE *mp3File)
+{
+    ESP_LOGI(TAG,"MP3 start decoding");
+    HMP3Decoder hMP3Decoder;
+    MP3FrameInfo mp3FrameInfo;
+    unsigned char *readBuf=malloc(MAINBUF_SIZE);
+    if(readBuf==NULL){
+      ESP_LOGE(TAG,"ReadBuf malloc failed");
+      return;
+    }
+    int16_t *output=malloc(1153*4);
+    if(output==NULL){
+      free(readBuf);
+      ESP_LOGE(TAG,"OutBuf malloc failed");
+    }
+    hMP3Decoder = MP3InitDecoder();
+    if (hMP3Decoder == 0){
+      free(readBuf);
+      free(output);
+      ESP_LOGE(TAG,"Memory not enough");
+    }
+
+    int samplerate = 0;
+    i2s_zero_dma_buffer(0);
+    char tag[10];
+    int tag_len = 0;
+    int read_bytes = fread(tag, 1, 10, mp3File);
+    if(read_bytes == 10) 
+       {
+        if (memcmp(tag,"ID3",3) == 0) 
+         {
+          tag_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
+            // ESP_LOGI(TAG,"tag_len: %d %x %x %x %x", tag_len,tag[6],tag[7],tag[8],tag[9]);
+          fseek(mp3File, tag_len - 10, SEEK_SET);
+         }
+        else 
+         {
+            fseek(mp3File, 0, SEEK_SET);
+         }
+       }
+       unsigned char* input = &readBuf[0];
+       int bytesLeft = 0;
+       int outOfData = 0;
+       unsigned char* readPtr = readBuf;
+       while (1) {    
+         if(playerState.paused == true) {
+            ESP_LOGI(TAG, "Paused.");
+            //dac_mute(true);
+            i2s_zero_dma_buffer(0);
+            while(playerState.paused == true);
+            ESP_LOGI(TAG, "Continued.");
+          }
+          //dac_mute(false);
+          if (bytesLeft < MAINBUF_SIZE)
+          {
+              memmove(readBuf, readPtr, bytesLeft);
+              int br = fread(readBuf + bytesLeft, 1, MAINBUF_SIZE - bytesLeft, mp3File);
+              if ((br == 0)&&(bytesLeft==0)) break;
+
+              bytesLeft = bytesLeft + br;
+              readPtr = readBuf;
+          }
+          int offset = MP3FindSyncWord(readPtr, bytesLeft);
+          if (offset < 0)
+          {  
+               ESP_LOGE(TAG,"MP3FindSyncWord not find");
+               bytesLeft=0;
+               continue;
+          }
+          else
+          {
+            readPtr += offset;                         //data start point
+            bytesLeft -= offset;                 //in buffer
+            int errs = MP3Decode(hMP3Decoder, &readPtr, &bytesLeft, (short*)output, 0);
+            if (errs != 0)
+            {
+                ESP_LOGE(TAG,"MP3Decode failed ,code is %d ",errs);
+                break;
+            }
+            MP3GetLastFrameInfo(hMP3Decoder, &mp3FrameInfo);   
+            if(samplerate!=mp3FrameInfo.samprate)
+            {
+                samplerate=mp3FrameInfo.samprate;
+                //hal_i2s_init(0,samplerate,16,mp3FrameInfo.nChans);
+                i2s_set_clk(0,samplerate,16,mp3FrameInfo.nChans);
+                //wm8978_samplerate_set(samplerate);
+                ESP_LOGI(TAG,"mp3file info---bitrate=%d,layer=%d,nChans=%d,samprate=%d,outputSamps=%d",mp3FrameInfo.bitrate,mp3FrameInfo.layer,mp3FrameInfo.nChans,mp3FrameInfo.samprate,mp3FrameInfo.outputSamps);
+            } 
+            for(int i = 0; i < mp3FrameInfo.outputSamps; ++i)
+              output[i] *= playerState.volumeMultiplier;
+
+            i2s_write(i2s_num,(const char*)output,mp3FrameInfo.outputSamps*2, (size_t*)(&read_bytes), 1000 / portTICK_RATE_MS);
+          }
+      
+      }
+    i2s_zero_dma_buffer(0);
+    //i2s_driver_uninstall(0);
+    MP3FreeDecoder(hMP3Decoder);
+    free(readBuf);
+    free(output);  
+    fclose(mp3File);
+ 
+    ESP_LOGI(TAG,"end mp3 decode ..");
 }

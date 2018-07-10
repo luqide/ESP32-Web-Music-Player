@@ -8,11 +8,13 @@
 #include "esp_err.h"
 #include "esp_log.h"
 
+#include "i2s_dac.h"
+
 #include "keypad_control.h"
 
 QueueHandle_t Queue_Key;
 bool keyStats[KEY_NUM];
-const char* TAG = "KEYPAD";
+static const char* TAG = "KEYPAD";
 key_event_t keyEvent;
 
 const int key_pins[KEY_NUM] = {
@@ -39,6 +41,8 @@ void taskScanKey(void *patameter) {
 					keyEvent.pressed = !keyStats[i];
 
 					xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+
+					if(i == 4 && keyStats[i] == KEY_PRESSED) player_pause(!isPaused());
 				}
 			}
 		}
