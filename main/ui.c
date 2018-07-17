@@ -14,25 +14,32 @@
 #include "driver/gpio.h"
 #include "driver/adc.h"
 
-#include "tftspi.h"
-#include "tft.h"
 #include "i2s_dac.h"
 #include "keypad_control.h"
 #include "ui.h"
 
 int batteryVoltage = 0;
 int batteryPercentage = 0;
+enum {
+	EMPTY = 0, QUARTER, HALF, QUARTER_TO, FULL
+} batteryIcon = FULL, batteryIcon_calc;
 int rawData = 0;
 uint8_t menuID = 0;
 
+#define HOME_LIST_NUM 4
 static const char *TAG = "UI";
+static const char homeMenuList[HOME_LIST_NUM][16] = {
+	"Now Playing", "Library", "Gallery", "Settings"
+};
 
 void getBatteryPecentage() {
 	adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_0);
+    adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);
     rawData = adc1_get_raw(ADC1_CHANNEL_0);
-    batteryVoltage = (double)(rawData + 10) / 4096.0 * 3300.0 *1.27;
-    batteryPercentage = (double)batteryVoltage / 42.0;
+
+	ESP_LOGI(TAG, "ADC rawData: %i", rawData);
+    batteryVoltage = (double)rawData / 4096.0 * 3578.0 * 175.0 / 100.0;
+    batteryPercentage = ((double)batteryVoltage - 3700) / 500.0 * 100;
 }
 
 void taskBattery(void *parameter) {
@@ -42,31 +49,12 @@ void taskBattery(void *parameter) {
 	while(1) {
 		getBatteryPecentage();
 		ESP_LOGI(TAG, "Battery voltage: %i mV", batteryVoltage);
-//		ESP_LOGI(TAG, "ADC RawData: %i", rawData);
 
+		ESP_LOGI(TAG, "Battery pecentage: %i %%", batteryPercentage);
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 	}
 }
 
 void taskUI_Char(void *parameter) {
-	TFT_fillRect(0, 0, 320, 24, TFT_BLACK);
-	TFT_fillRect(0, 24, 320, 216, TFT_WHITE);
-	char status[32];
-
-	while(1) {
-		memset(status, 0, sizeof(status));
-		sprintf(status, "Battery: %i%% Volume: %i%% %s", batteryPercentage, getVolumePercentage(), isPaused() ? "Paused" : "Playing");
-
-  		TFT_print(status, 0, 0);
-  		switch (menuID) {
-  			case 0:
-
-  				break;
-
-  			default:
-  				menuID = 0;
-  				break;
-
-  		}
-	}
+	
 }

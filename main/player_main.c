@@ -20,8 +20,6 @@
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
 
-#include "tftspi.h"
-#include "tft.h"
 #include "sd_card.h"
 #include "dirent.h"
 #include "i2s_dac.h"
@@ -78,7 +76,7 @@ void app_main() {
     .base_path = "/spiffs",
     .partition_label = NULL,
     .max_files = 5,
-    .format_if_mount_failed = true
+    .format_if_mount_failed = false
   };
   
   // Use settings defined above to initialize and mount SPIFFS filesystem.
@@ -96,35 +94,14 @@ void app_main() {
     return;
   }
 
-//  vTaskDelay(1000 / portTICK_RATE_MS);
+  ESP_LOGI(TAG, "Mount spiffs succeeded.");
 
-
-  // TFT_PinsInit();
-  // //initialize spi bus
-  // spi_lobo_bus_config_t buscfg = {
-  //   .miso_io_num = PIN_NUM_MISO,
-  //   .mosi_io_num = PIN_NUM_MOSI,
-  //   .sclk_io_num = PIN_NUM_CLK,
-  //   .quadwp_io_num = -1,
-  //   .quadhd_io_num = -1,
-  //   .max_transfer_sz = 240*320*2*8,
-  // };
-
-  // spi_lobo_device_interface_config_t lcd_devcfg = {
-  //     .clock_speed_hz=30000000,                // Initial clock out at 8 MHz
-  //     .mode=0,                                // SPI mode 0
-  //     .spics_io_num=-1,                       // we will use external CS pin
-  //   .spics_ext_io_num=PIN_NUM_CS,           // external CS pin
-  //   .flags=LB_SPI_DEVICE_HALFDUPLEX,        // ALWAYS SET  to HALF DUPLEX MODE!! for display spi
-  // };
-
-  // spi_lobo_device_handle_t spi;
-  // ret = spi_lobo_bus_add_device(VSPI_HOST, &buscfg, &lcd_devcfg, &spi);
-  // ESP_ERROR_CHECK(ret);
-  // disp_spi = spi;
-
-  // TFT_display_init();
-  // TFT_setclipwin(0, 0, 320, 240);
+  uint32_t tot=0, used=0;
+  esp_spiffs_info(NULL, &tot, &used);
+  ESP_LOGI("TAG", "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
+  //sdcard init
+  sdmmc_card_t card;
+  sdmmc_mount(&card);
 
   //WiFi Init
   nvs_flash_init();
@@ -139,8 +116,8 @@ void app_main() {
   ESP_ERROR_CHECK( esp_wifi_set_auto_connect(1) );
   wifi_config_t sta_config = {
       .sta = {
-          .ssid = "Molly_AP",
-          .password = "qazwsx741",
+          .ssid = "Molly_2.4G",
+          .password = "bakaFANCY520",
           .bssid_set = false
       }
   };
@@ -149,9 +126,8 @@ void app_main() {
   ESP_ERROR_CHECK( esp_wifi_connect() );
 
   //keypad init
-  keyPinInit();
   ESP_ERROR_CHECK(keyQueueCreate());
-  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",3000,NULL,(portPRIVILEGE_BIT | 3),&keyHandle,1) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",2000,NULL,(portPRIVILEGE_BIT | 2),&keyHandle,1) == pdPASS) 
     ESP_LOGI(TAG, "KeyScan task created.");
   else ESP_LOGE(TAG, "Failed to create KeyScan task.");
   //battery task init
@@ -159,21 +135,16 @@ void app_main() {
     ESP_LOGI(TAG, "Battery voltage scanning task created.");
   else ESP_LOGE(TAG, "Failed to create Battery voltage scanning task.");
 
-  // if(xTaskCreatePinnedToCore(taskUI_Char,"UI",4096,NULL,(portPRIVILEGE_BIT | 2),&uiHandle,1) == pdPASS) 
+  // if(xTaskCreatePinnedToCore(taskUI_Char,"UI",8192,NULL,(portPRIVILEGE_BIT | 4),&uiHandle,0) == pdPASS) 
   //   ESP_LOGI(TAG, "UI_Char task created.");
   // else ESP_LOGE(TAG, "Failed to create UI_Char task.");
-
-  //sdcard init
-  sdmmc_card_t card;
-  sdmmc_mount(&card);
 
   //i2s init
   i2s_init();
 
   setNowPlaying("/sdcard/MP3/无题 - 陈亮.mp3");
-  player_pause(false);
+  player_pause(true);
   dac_mute(false);
-
 
   FILE *musicFile = NULL;
   while(1) {
@@ -192,7 +163,7 @@ void app_main() {
               wavPlay(musicFile);
               break;
             case MP3:
-              mp3Play(musicFile);
+              //mp3Play(musicFile);
               break;
             case APE:
               break;
@@ -201,6 +172,7 @@ void app_main() {
             default:
               break;
           }
+          fclose(musicFile);
         }
       } else {
           ESP_LOGE(TAG, "Unsupported music file type.");

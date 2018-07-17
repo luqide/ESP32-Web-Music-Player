@@ -1,6 +1,7 @@
 #ifndef _I2S_DAC_H_
 #define _I2S_DAC_H_
 
+#define MAINBUF_SIZE    1940
 #define MIN_VOL_OFFSET -50
 
 #define CCCC(c1, c2, c3, c4)    ((c4 << 24) | (c3 << 16) | (c2 << 8) | c1)
@@ -53,13 +54,25 @@ typedef struct {
 } wavProperties_t;
 /* variables hold file, state of process wav file and wav file properties */
 
+typedef struct {
+    unsigned char buf[MAINBUF_SIZE];
+    int bytesLeft;
+    bool reading;
+    size_t offset;
+} audioBuffer_t;
+
+typedef struct {
+    audioBuffer_t *buf;
+    char *url;
+    FILE *pfile;    
+} bufferFeedParameter_t;
 
 size_t readNBytes(FILE *file, uint8_t *data, int count);
 size_t read4bytes(FILE *file, uint32_t *chunkId);
 size_t readRiff(FILE *file, wavRiff_t *wavRiff);
 size_t readProps(FILE *file, wavProperties_t *wavProps);
 esp_err_t wavPlay(FILE *wavFile);
-void mp3Play(FILE *mp3File);
+void mp3Play(audioBuffer_t *buf);
 void setVolume(int vol);
 int getVolumePercentage();
 esp_err_t i2s_init();
@@ -71,4 +84,9 @@ int getMusicType();
 void setNowPlaying(char *str);
 bool isPaused();
 FILE* musicFileOpen();
+
+size_t bread(void *dst, size_t size, int count, audioBuffer_t *src);
+void bseek(audioBuffer_t *buf, int offset, int fromwhere);
+void taskFeedBuffer_File(void *parameter);
+void taskFeedBuffer_Http(void *parameter);
 #endif

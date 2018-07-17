@@ -3,15 +3,17 @@
 
 #define KEY_NUM 5
 
-#define KEY_PRESSED 0
-#define KEY_RELEASED 1
+#define KEY_PRESSED 1
+#define KEY_RELEASED 0
 
 enum key_name {
 	KEY_NAME_UP = 0,
 	KEY_NAME_DOWN,
 	KEY_NAME_LEFT,
 	KEY_NAME_RIGHT,
-	KEY_NAME_MID
+	KEY_NAME_MID,
+	KEY_NAME_MENU,
+	KEY_NAME_BACK
 };
 
 typedef struct {
@@ -20,7 +22,6 @@ typedef struct {
 } key_event_t;
 
 extern QueueHandle_t Queue_Key;
-void keyPinInit();
 void taskScanKey(void *parameter);
 esp_err_t keyQueueCreate();
 #endif
