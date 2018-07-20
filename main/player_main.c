@@ -19,7 +19,11 @@
 #include "nvs_flash.h"
 #include "soc/gpio_struct.h"
 #include "driver/gpio.h"
+#include "esp_freertos_hooks.h"
 
+#include "../lvgl/lvgl.h"
+#include "../drv/disp_spi.h"
+#include "../drv/ili9341.h"
 #include "sd_card.h"
 #include "dirent.h"
 #include "i2s_dac.h"
@@ -31,45 +35,29 @@ static EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
 
 static const char *TAG = "APP_MAIN";
-static esp_err_t wifi_event_handler(void *ctx, system_event_t *event) {
-    switch(event->event_id) {
-      case SYSTEM_EVENT_STA_START:
-          esp_wifi_connect();
-          break;
-      case SYSTEM_EVENT_STA_GOT_IP:
-          ESP_LOGI(TAG, "got ip:%s",
-                   ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
-          xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
-          break;
-      case SYSTEM_EVENT_AP_STACONNECTED:
-          ESP_LOGI(TAG, "station:"MACSTR" join, AID=%d",
-                   MAC2STR(event->event_info.sta_connected.mac),
-                   event->event_info.sta_connected.aid);
-          break;
-      case SYSTEM_EVENT_AP_STADISCONNECTED:
-          ESP_LOGI(TAG, "station:"MACSTR"leave, AID=%d",
-                   MAC2STR(event->event_info.sta_disconnected.mac),
-                   event->event_info.sta_disconnected.aid);
-          break;
-      case SYSTEM_EVENT_STA_DISCONNECTED:
-          esp_wifi_connect();
-          xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
-          break;
-      default:
-          break;
-    }
-    return ESP_OK;
-}
+static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
+static void lv_tick_task(void);
+
+bool keypad_read(lv_indev_data_t *data);
+
+typedef FILE* pc_file_t;
+static lv_fs_res_t pcfs_open(void * file_p, const char * fn, lv_fs_mode_t mode);
+static lv_fs_res_t pcfs_close(void * file_p);
+static lv_fs_res_t pcfs_read(void * file_p, void * buf, uint32_t btr, uint32_t * br);
+static lv_fs_res_t pcfs_seek(void * file_p, uint32_t pos);
+static lv_fs_res_t pcfs_tell(void * file_p, uint32_t * pos_p);
 
 TaskHandle_t keyHandle = NULL; 
 TaskHandle_t playerHandle = NULL;
 TaskHandle_t uiHandle = NULL;
 TaskHandle_t batHandle = NULL;
 
+sdmmc_card_t card;
+
 void app_main() {
   esp_err_t ret;
   gpio_set_direction(PIN_PD, GPIO_MODE_OUTPUT);
-  gpio_set_level(PIN_PD, 0);
+  gpio_set_level(PIN_PD, 1);
 
   //spiffs mount
   esp_vfs_spiffs_conf_t conf = {
@@ -100,8 +88,35 @@ void app_main() {
   esp_spiffs_info(NULL, &tot, &used);
   ESP_LOGI("TAG", "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
   //sdcard init
-  sdmmc_card_t card;
   sdmmc_mount(&card);
+
+  //littlevgl init
+  lv_init();
+  disp_spi_init();
+  ili9431_init();
+  lv_disp_drv_t disp;
+  lv_disp_drv_init(&disp);
+  disp.disp_flush = ili9431_flush;
+  lv_disp_drv_register(&disp);
+
+  lv_fs_drv_t pcfs_drv;
+  memset(&pcfs_drv, 0, sizeof(lv_fs_drv_t));
+  pcfs_drv.file_size = sizeof(pc_file_t);       /*Set up fields...*/
+  pcfs_drv.letter = 'S';
+  pcfs_drv.open = pcfs_open;
+  pcfs_drv.close = pcfs_close;
+  pcfs_drv.read = pcfs_read;
+  pcfs_drv.seek = pcfs_seek;
+  pcfs_drv.tell = pcfs_tell;
+  lv_fs_add_drv(&pcfs_drv);
+
+
+  //set up littlevgl input device
+  // lv_indev_drv_t indev_drv;
+  // lv_indev_drv_init(&indev_drv);
+  // indev_drv.type = LV_INDEV_TYPE_KEYPAD;
+  // indev_drv.read = keypad_read;
+  // lv_indev_drv_register(&indev_drv);
 
   //WiFi Init
   nvs_flash_init();
@@ -131,55 +146,119 @@ void app_main() {
     ESP_LOGI(TAG, "KeyScan task created.");
   else ESP_LOGE(TAG, "Failed to create KeyScan task.");
   //battery task init
-  if(xTaskCreatePinnedToCore(taskBattery,"BATTERY",3000,NULL,(portPRIVILEGE_BIT | 2),&batHandle,1) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskBattery,"BATTERY",2000,NULL,(portPRIVILEGE_BIT | 2),&batHandle,1) == pdPASS) 
     ESP_LOGI(TAG, "Battery voltage scanning task created.");
   else ESP_LOGE(TAG, "Failed to create Battery voltage scanning task.");
 
-  // if(xTaskCreatePinnedToCore(taskUI_Char,"UI",8192,NULL,(portPRIVILEGE_BIT | 4),&uiHandle,0) == pdPASS) 
-  //   ESP_LOGI(TAG, "UI_Char task created.");
-  // else ESP_LOGE(TAG, "Failed to create UI_Char task.");
+  if(xTaskCreatePinnedToCore(taskUI_Char,"UI",8192,NULL,(portPRIVILEGE_BIT | 4),&uiHandle,0) == pdPASS) 
+    ESP_LOGI(TAG, "UI_Char task created.");
+  else ESP_LOGE(TAG, "Failed to create UI_Char task.");
+
+  if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS) 
+    ESP_LOGI(TAG, "Music Player task created.");
+  else ESP_LOGE(TAG, "Failed to create Player task.");
 
   //i2s init
   i2s_init();
+  setNowPlaying("/sdcard/MP3/Do You Wanna Build a Snowman.mp3");
+  player_pause(false);
+  playerState.started = true;
 
-  setNowPlaying("/sdcard/MP3/无题 - 陈亮.mp3");
-  player_pause(true);
-  dac_mute(false);
-
-  FILE *musicFile = NULL;
+  esp_register_freertos_tick_hook(lv_tick_task);
   while(1) {
-    if(isPaused() == false) { 
-      parseMusicType();
-      if(getMusicType() != NONE) {
-        musicFile = musicFileOpen();
-        if(musicFile == NULL) {
-          ESP_LOGE(TAG, "Failed to open music file.");
-          player_pause(true);
-        } else {
-          switch(getMusicType()) {
-            case NONE:
-              break;
-            case WAV:
-              wavPlay(musicFile);
-              break;
-            case MP3:
-              //mp3Play(musicFile);
-              break;
-            case APE:
-              break;
-            case FLAC:
-              break;
-            default:
-              break;
-          }
-          fclose(musicFile);
-        }
-      } else {
-          ESP_LOGE(TAG, "Unsupported music file type.");
-          player_pause(true);
-      }
-
-
-    }
+    vTaskDelay(5 / portTICK_RATE_MS);
+    lv_task_handler();
   }
+}
+
+static esp_err_t wifi_event_handler(void *ctx, system_event_t *event) {
+    switch(event->event_id) {
+      case SYSTEM_EVENT_STA_START:
+          esp_wifi_connect();
+          break;
+      case SYSTEM_EVENT_STA_GOT_IP:
+          wifi_set_stat(true);
+          ESP_LOGI(TAG, "got ip:%s",
+                   ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
+          xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
+          break;
+      case SYSTEM_EVENT_AP_STACONNECTED:
+          ESP_LOGI(TAG, "station:"MACSTR" join, AID=%d",
+                   MAC2STR(event->event_info.sta_connected.mac),
+                   event->event_info.sta_connected.aid);
+          break;
+      case SYSTEM_EVENT_AP_STADISCONNECTED:
+          ESP_LOGI(TAG, "station:"MACSTR"leave, AID=%d",
+                   MAC2STR(event->event_info.sta_disconnected.mac),
+                   event->event_info.sta_disconnected.aid);
+          break;
+      case SYSTEM_EVENT_STA_DISCONNECTED:
+          wifi_set_stat(false);
+          esp_wifi_connect();
+          xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
+          break;
+      default:
+          break;
+    }
+    return ESP_OK;
+}
+
+static void lv_tick_task(void) {
+  lv_tick_inc(portTICK_RATE_MS);
+}
+
+static lv_fs_res_t pcfs_open(void * file_p, const char * fn, lv_fs_mode_t mode)
+{
+    errno = 0;
+
+    const char * flags = "";
+
+    if(mode == LV_FS_MODE_WR) flags = "wb";
+    else if(mode == LV_FS_MODE_RD) flags = "rb";
+    else if(mode == (LV_FS_MODE_WR | LV_FS_MODE_RD)) flags = "a+";
+
+    /*Make the path relative to the current directory (the projects root folder)*/
+    // char buf[256];
+    // sprintf(buf, "./%s", fn);
+
+    pc_file_t f = fopen(fn, flags);
+    if((long int)f <= 0) return LV_FS_RES_UNKNOWN;
+    else {
+        fseek(f, 0, SEEK_SET);
+
+        /* 'file_p' is pointer to a file descriptor and
+         * we need to store our file descriptor here*/
+        pc_file_t * fp = file_p;        /*Just avoid the confusing casings*/
+        *fp = f;
+    }
+
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t pcfs_close(void * file_p)
+{
+    pc_file_t * fp = file_p;        /*Just avoid the confusing casings*/
+    fclose(*fp);
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t pcfs_read(void * file_p, void * buf, uint32_t btr, uint32_t * br)
+{
+    pc_file_t * fp = file_p;        /*Just avoid the confusing casings*/
+    *br = fread(buf, 1, btr, *fp);
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t pcfs_seek(void * file_p, uint32_t pos)
+{
+    pc_file_t * fp = file_p;        /*Just avoid the confusing casings*/
+    fseek(*fp, pos, SEEK_SET);
+    return LV_FS_RES_OK;
+}
+
+static lv_fs_res_t pcfs_tell(void * file_p, uint32_t * pos_p)
+{
+    pc_file_t * fp = file_p;        /*Just avoid the confusing casings*/
+    *pos_p = ftell(*fp);
+    return LV_FS_RES_OK;
 }

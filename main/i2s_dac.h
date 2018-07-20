@@ -26,10 +26,14 @@ typedef enum {
 } headerState_t;
 
 typedef struct {
-    bool paused;
+    bool paused, started;
     uint16_t totalTime;
     uint16_t currentTime;
-    char nowPlaying[512];
+    char nowPlaying[128];
+    char author[128];
+    char album[128];
+    char fileName[128];
+    FILE *filePtr;
     int playMode;
     int volume; //0 - 100%
     double volumeMultiplier;
@@ -67,12 +71,14 @@ typedef struct {
     FILE *pfile;    
 } bufferFeedParameter_t;
 
+extern playerState_t playerState;
+
 size_t readNBytes(FILE *file, uint8_t *data, int count);
 size_t read4bytes(FILE *file, uint32_t *chunkId);
 size_t readRiff(FILE *file, wavRiff_t *wavRiff);
 size_t readProps(FILE *file, wavProperties_t *wavProps);
 esp_err_t wavPlay(FILE *wavFile);
-void mp3Play(audioBuffer_t *buf);
+void mp3Play(FILE *mp3File);
 void setVolume(int vol);
 int getVolumePercentage();
 esp_err_t i2s_init();
@@ -84,9 +90,9 @@ int getMusicType();
 void setNowPlaying(char *str);
 bool isPaused();
 FILE* musicFileOpen();
-
-size_t bread(void *dst, size_t size, int count, audioBuffer_t *src);
-void bseek(audioBuffer_t *buf, int offset, int fromwhere);
-void taskFeedBuffer_File(void *parameter);
-void taskFeedBuffer_Http(void *parameter);
+void taskPlay(void *parameter);
+// size_t bread(void *dst, size_t size, int count, audioBuffer_t *src);
+// void bseek(audioBuffer_t *buf, int offset, int fromwhere);
+// void taskFeedBuffer_File(void *parameter);
+// void taskFeedBuffer_Http(void *parameter);
 #endif

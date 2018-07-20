@@ -39,10 +39,10 @@ void taskScanKey(void *patameter) {
 		}
 
 		keyEvent.pressed = KEY_PRESSED;
-		ESP_LOGI(TAG, "key %i pressed.", keyEvent.key_name);
+		//ESP_LOGI(TAG, "key %i pressed.", keyEvent.key_name);
 		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
 		while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
-		ESP_LOGI(TAG, "key %i released.", keyEvent.key_name);
+		//ESP_LOGI(TAG, "key %i released.", keyEvent.key_name);
 		keyEvent.pressed = KEY_RELEASED;
 		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
 		vTaskDelay(20 / portTICK_RATE_MS);

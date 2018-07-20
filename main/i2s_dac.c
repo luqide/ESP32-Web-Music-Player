@@ -27,7 +27,7 @@ i2s_config_t i2s_config = {
     .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // high interrupt priority
-    .dma_buf_count = 128,
+    .dma_buf_count = 64,
     .dma_buf_len = 64,   //Interrupt level 1
     .use_apll = true,
 //     .fixed_mclk = 11289600
@@ -44,9 +44,12 @@ int i2s_num = 0; // i2s port number
 
 playerState_t playerState = {
   .paused = true,
+  .started = false,
   .totalTime = 0,
   .currentTime = 0,
   .nowPlaying = "",
+  .author = "",
+  .album = "",
   .playMode = PLAYMODE_PLAYLIST,
   .volume = 50,
   .volumeMultiplier = pow(10, -25 / 20.0),
@@ -135,7 +138,7 @@ esp_err_t wavPlay(FILE *wavFile) {
             ESP_LOGI(TAG, "Paused.");
             i2s_zero_dma_buffer(0);
             // dac_mute(true);
-            while(playerState.paused == true);
+            while(playerState.paused == true)vTaskDelay(100 / portTICK_RATE_MS);
             ESP_LOGI(TAG, "Continued.");
           }
           // dac_mute(false);
@@ -161,7 +164,9 @@ esp_err_t wavPlay(FILE *wavFile) {
 }
 
 void setVolume(int vol) {
-  playerState.volume = vol;
+  if(vol > 100 ) playerState.volume = 100;
+  else if(vol < 0) playerState.volume = 0;
+  else playerState.volume = vol;
   playerState.volumeMultiplier = pow(10, (MIN_VOL_OFFSET + vol / 2) / 20.0);
 }
 
@@ -196,14 +201,14 @@ void player_pause(bool p) {
 
 void parseMusicType() {
   char typeName[8];
-  int len = strlen(playerState.nowPlaying);
+  int len = strlen(playerState.fileName);
   if(len < 5) {
     playerState.musicType = NONE;
     return;
   }
   memset(typeName, 0, sizeof(typeName));
   for(int i = 0; i < 4; ++i)
-    typeName[i] = playerState.nowPlaying[len  - (4 - i)];
+    typeName[i] = playerState.fileName[len  - (4 - i)];
 
 //  printf("%s\n", typeName);
   if((!strcmp(typeName, ".wav")) | (!strcmp(typeName, ".WAV")))
@@ -218,7 +223,7 @@ void parseMusicType() {
 }
 
 void setNowPlaying(char *str) {
-  strcpy(playerState.nowPlaying, str);
+  strcpy(playerState.fileName, str);
 }
 
 int getMusicType() {
@@ -238,75 +243,109 @@ int getVolumePercentage() {
 }
 
 
-void mp3Play(audioBuffer_t *buf) {
+void mp3Play(FILE *mp3File)
+{
     ESP_LOGI(TAG,"MP3 start decoding");
     HMP3Decoder hMP3Decoder;
     MP3FrameInfo mp3FrameInfo;
-    memset(buf, 0, sizeof(audioBuffer_t));
-    int16_t *output = malloc(1153*4);
-    if(output==NULL){
-      ESP_LOGE(TAG,"OutBuf malloc failed");
+    unsigned char *readBuf=malloc(MAINBUF_SIZE);
+    if(readBuf==NULL){
+      ESP_LOGE(TAG,"ReadBuf malloc failed");
       return;
+    }
+    int16_t *output=malloc(1153*4);
+    if(output==NULL){
+      free(readBuf);
+      ESP_LOGE(TAG,"OutBuf malloc failed");
     }
     hMP3Decoder = MP3InitDecoder();
     if (hMP3Decoder == 0){
+      free(readBuf);
       free(output);
       ESP_LOGE(TAG,"Memory not enough");
-      return;
     }
 
     int samplerate = 0;
     i2s_zero_dma_buffer(0);
     char tag[10];
     int tag_len = 0;
-    int read_bytes = bread(tag, 1, 10, buf);
+    int read_bytes = fread(tag, 1, 10, mp3File);
     if(read_bytes == 10) {
       if (memcmp(tag,"ID3",3) == 0) {
         tag_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
           // ESP_LOGI(TAG,"tag_len: %d %x %x %x %x", tag_len,tag[6],tag[7],tag[8],tag[9]);
-        bseek(buf, tag_len - 10, SEEK_SET);
-        buf->bytesLeft -= tag_len - 10;
-        }
+        // while(ftell(mp3File) < tag_len) {
+        //   read_bytes = fread(tag, 1, 10, mp3File);
+        //   int frame_len = 0;
+        //   if(read_bytes == 10) {
+        //     frame_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
+        //     char FrameID[5], *FrameData;
+        //     for(int i = 0; i < 4; ++i) FrameID[i] = tag[i];
+        //     if(!strcmp(FrameID, "TIT2")) {
+        //       FrameData = playerState.nowPlaying;
+        //     } else if(!strcmp(FrameID, "TPE1")) {
+        //       FrameData = playerState.author;
+        //     } else if(!strcmp(FrameID, "TALB")) {
+        //       FrameData = playerState.album;
+        //     } else {
+        //       fseek(mp3File, frame_len, SEEK_CUR);
+        //       continue;
+        //     }
+        //     fread(FrameData, 1, frame_len, mp3File);
+        //   }
+        // }
+        fseek(mp3File, tag_len - 10, SEEK_CUR);
+       }
       else {
-        ESP_LOGE(TAG, "MP3 data unrecognized.");
+        ESP_LOGE(TAG, "Not an mp3 file.");
         return;
       }
      }
-     unsigned char *readPtr = buf->buf;
+     unsigned char* input = &readBuf[0];
+     int bytesLeft = 0;
+     int outOfData = 0;
+     unsigned char* readPtr = readBuf;
      while (1) {    
-       readPtr = buf->buf;
        if(playerState.paused == true) {
           ESP_LOGI(TAG, "Paused.");
+          //dac_mute(true);
           i2s_zero_dma_buffer(0);
-          while(playerState.paused == true);
+          while(playerState.paused == true) vTaskDelay(100 / portTICK_RATE_MS);
           ESP_LOGI(TAG, "Continued.");
         }
+        //dac_mute(false);
+        if (bytesLeft < MAINBUF_SIZE)
+        {
+            memmove(readBuf, readPtr, bytesLeft);
+            int br = fread(readBuf + bytesLeft, 1, MAINBUF_SIZE - bytesLeft, mp3File);
+            if ((br == 0)&&(bytesLeft==0)) break;
 
-        buf->reading = true;
-        int offset = MP3FindSyncWord(buf->buf, buf->bytesLeft);
+            bytesLeft = bytesLeft + br;
+            readPtr = readBuf;
+        }
+        int offset = MP3FindSyncWord(readPtr, bytesLeft);
         if (offset < 0)
         {  
              ESP_LOGE(TAG,"MP3FindSyncWord not find");
-             buf->bytesLeft = 0;
+             bytesLeft=0;
              continue;
         }
         else
         {
           readPtr += offset;                         //data start point
-          buf->bytesLeft -= offset;                 //in buffer
-          int errs = MP3Decode(hMP3Decoder, &readPtr, &(buf->bytesLeft), (short*)output, 0);
-          buf->reading = false;
+          bytesLeft -= offset;                 //in buffer
+          int errs = MP3Decode(hMP3Decoder, &readPtr, &bytesLeft, (short*)output, 0);
           if (errs != 0)
           {
               ESP_LOGE(TAG,"MP3Decode failed ,code is %d ",errs);
               break;
           }
           MP3GetLastFrameInfo(hMP3Decoder, &mp3FrameInfo);   
-          if(samplerate != mp3FrameInfo.samprate)
+          if(samplerate!=mp3FrameInfo.samprate)
           {
-              samplerate = mp3FrameInfo.samprate;
+              samplerate=mp3FrameInfo.samprate;
               //hal_i2s_init(0,samplerate,16,mp3FrameInfo.nChans);
-              i2s_set_clk(0, samplerate, 16, mp3FrameInfo.nChans);
+              i2s_set_clk(0,samplerate,16,mp3FrameInfo.nChans);
               //wm8978_samplerate_set(samplerate);
               ESP_LOGI(TAG,"mp3file info---bitrate=%d,layer=%d,nChans=%d,samprate=%d,outputSamps=%d",mp3FrameInfo.bitrate,mp3FrameInfo.layer,mp3FrameInfo.nChans,mp3FrameInfo.samprate,mp3FrameInfo.outputSamps);
           } 
@@ -316,54 +355,66 @@ void mp3Play(audioBuffer_t *buf) {
           i2s_write(i2s_num,(const char*)output,mp3FrameInfo.outputSamps*2, (size_t*)(&read_bytes), 1000 / portTICK_RATE_MS);
         }
     
-    }
-  i2s_zero_dma_buffer(0);
-  //i2s_driver_uninstall(0);
-  MP3FreeDecoder(hMP3Decoder);
-  free(output);  
-
-  ESP_LOGI(TAG,"end mp3 decode ..");
+      }
+    i2s_zero_dma_buffer(0);
+    //i2s_driver_uninstall(0);
+    MP3FreeDecoder(hMP3Decoder);
+    free(readBuf);
+    free(output);  
+    fclose(mp3File);
+ 
+    ESP_LOGI(TAG,"end mp3 decode ..");
 }
 
-size_t bread(void *dst, size_t size, int count, audioBuffer_t *src) {
-  if(dst == NULL || src == NULL) return 0;
-  memcpy(dst, src->buf + src->offset, size*count);
-  src->offset += size*count;
-  return size*count;
-}
+// size_t bread(void *dst, size_t size, int count, audioBuffer_t *src) {
+//   if(dst == NULL || src == NULL) return 0;
+//   memcpy(dst, src->buf + src->offset, size*count);
+//   src->offset += size*count;
+//   return size*count;
+// }
 
-void bseek(audioBuffer_t *buf, int offset, int fromwhere) {
-  if(buf == NULL) return;
-  switch(fromwhere) {
-    case 0: 
-      if(offset < 0) return;
-      buf->offset = offset;
-      break;
+// void bseek(audioBuffer_t *buf, int offset, int fromwhere) {
+//   if(buf == NULL) return;
+//   switch(fromwhere) {
+//     case 0: 
+//       if(offset < 0) return;
+//       buf->offset = offset;
+//       break;
 
-    case 1:
-      buf->offset += offset;
-      break;
+//     case 1:
+//       buf->offset += offset;
+//       break;
 
-    case 2:
-      buf->offset = MAINBUF_SIZE + offset;
-      break;
+//     case 2:
+//       buf->offset = MAINBUF_SIZE + offset;
+//       break;
 
-    default: return;
-      break;
-  }
-}
+//     default: return;
+//       break;
+//   }
+// }
 
-void taskFeedBuffer_File(void *parameter) {
-  bufferFeedParameter_t *para = (bufferFeedParameter_t*)parameter;
-
-  if(para->pfile == NULL) {
-    ESP_LOGE(TAG, "Failed to open file.");
-    vTaskDelete(NULL);
-  }
-
+void taskPlay(void *parameter) {
   while(1) {
-    if(para->buf->reading == false) {
-      
+    if(playerState.started) {
+      playerState.filePtr = fopen(playerState.fileName, "rb");
+      if(playerState.filePtr != NULL) {
+        parseMusicType();
+        switch(playerState.musicType) {
+          case WAV:
+            wavPlay(playerState.filePtr);
+          break;
+
+          case MP3:
+            mp3Play(playerState.filePtr);
+          break;
+
+          default:break;
+        }
+        fclose(playerState.filePtr);
+      }
     }
+
+    vTaskDelay(200 / portTICK_RATE_MS);
   }
 }

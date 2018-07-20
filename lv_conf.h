@@ -41,7 +41,7 @@
 
 /* Use two Virtual Display buffers (VDB) parallelize rendering and flushing (optional)
  * The flushing should use DMA to write the frame buffer in the background*/
-#define LV_VDB_DOUBLE       0       /*1: Enable the use of 2 VDBs*/
+#define LV_VDB_DOUBLE       1       /*1: Enable the use of 2 VDBs*/
 #define LV_VDB2_ADR         0       /*Place VDB2 to a specific address (e.g. in external RAM) (0: allocate automatically into RAM)*/
 
 /* Enable anti-aliasing (lines, and radiuses will be smoothed) */
@@ -91,7 +91,7 @@
 #define USE_LV_THEME_ALIEN      0       /*Dark futuristic theme*/
 #define USE_LV_THEME_NIGHT      0       /*Dark elegant theme*/
 #define USE_LV_THEME_MONO       0       /*Mono color theme for monochrome displays*/
-#define USE_LV_THEME_MATERIAL   0       /*Flat theme with bold colors and light shadows*/
+#define USE_LV_THEME_MATERIAL   1       /*Flat theme with bold colors and light shadows*/
 #define USE_LV_THEME_ZEN        0       /*Peaceful, mainly light theme */
 
 /*==================
@@ -113,15 +113,15 @@
 #define USE_LV_FONT_DEJAVU_20_CYRILLIC     0
 #define USE_LV_FONT_SYMBOL_20              4
 
-#define USE_LV_FONT_DEJAVU_30              0
+#define USE_LV_FONT_DEJAVU_30              4
 #define USE_LV_FONT_DEJAVU_30_LATIN_SUP    0
 #define USE_LV_FONT_DEJAVU_30_CYRILLIC     0
-#define USE_LV_FONT_SYMBOL_30              0
+#define USE_LV_FONT_SYMBOL_30              4
 
-#define USE_LV_FONT_DEJAVU_40              0
+#define USE_LV_FONT_DEJAVU_40              4
 #define USE_LV_FONT_DEJAVU_40_LATIN_SUP    0
 #define USE_LV_FONT_DEJAVU_40_CYRILLIC     0
-#define USE_LV_FONT_SYMBOL_40              0
+#define USE_LV_FONT_SYMBOL_40              4
 
 /*===================
  *  LV_OBJ SETTINGS
