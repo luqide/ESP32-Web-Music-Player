@@ -1,18 +1,20 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
-#include "stdio.h"
-#include "stdlib.h"
-#include "time.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <dirent.h>
 #include "sys/stat.h"
 #include "driver/i2s.h"
 #include "soc/io_mux_reg.h"
 #include "esp_log.h"
-#include "math.h"
+#include <math.h>
 #include "ui.h"
-#include "string.h"
+#include <string.h>
 #include "mp3dec.h"
 #include "i2s_dac.h"
+#include "sd_card.h"
 
 static const char *TAG = "CODEC";
 headerState_t state = HEADER_RIFF;
@@ -55,6 +57,8 @@ playerState_t playerState = {
   .volumeMultiplier = pow(10, -25 / 20.0),
   .musicType = NONE
 };
+
+music_db_t musicDb;
 
 
 size_t read4bytes(FILE *file, uint32_t *chunkId){
@@ -264,6 +268,11 @@ void mp3Play(FILE *mp3File)
       free(output);
       ESP_LOGE(TAG,"Memory not enough");
     }
+    fseek(mp3File, 0, SEEK_END);
+    size_t fileSize = ftell(mp3File);
+    rewind(mp3File);
+
+    playerState.currentTime = 0;
 
     int samplerate = 0;
     i2s_zero_dma_buffer(0);
@@ -274,39 +283,44 @@ void mp3Play(FILE *mp3File)
       if (memcmp(tag,"ID3",3) == 0) {
         tag_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
           // ESP_LOGI(TAG,"tag_len: %d %x %x %x %x", tag_len,tag[6],tag[7],tag[8],tag[9]);
-        // while(ftell(mp3File) < tag_len) {
-        //   read_bytes = fread(tag, 1, 10, mp3File);
-        //   int frame_len = 0;
-        //   if(read_bytes == 10) {
-        //     frame_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
-        //     char FrameID[5], *FrameData;
-        //     for(int i = 0; i < 4; ++i) FrameID[i] = tag[i];
-        //     if(!strcmp(FrameID, "TIT2")) {
-        //       FrameData = playerState.nowPlaying;
-        //     } else if(!strcmp(FrameID, "TPE1")) {
-        //       FrameData = playerState.author;
-        //     } else if(!strcmp(FrameID, "TALB")) {
-        //       FrameData = playerState.album;
-        //     } else {
-        //       fseek(mp3File, frame_len, SEEK_CUR);
-        //       continue;
-        //     }
-        //     fread(FrameData, 1, frame_len, mp3File);
-        //   }
-        // }
-        fseek(mp3File, tag_len - 10, SEEK_CUR);
+        while(ftell(mp3File) <= tag_len) {
+          read_bytes = fread(tag, 1, 10, mp3File);
+          int frame_len = 0;
+          if(read_bytes == 10) {
+            frame_len = (tag[4] << 24)|(tag[5] << 16)|(tag[6] << 8)|tag[7];
+            char FrameID[5] = "", *FrameData;
+            for(int i = 0; i < 4; ++i) FrameID[i] = tag[i];
+            if(!strcmp(FrameID, "TIT2")) {
+              ESP_LOGI(TAG, "FrameID: %s", FrameID);
+              FrameData = playerState.nowPlaying;
+            } else if(!strcmp(FrameID, "TPE1")) {
+              ESP_LOGI(TAG, "FrameID: %s", FrameID);
+              FrameData = playerState.author;
+            } else if(!strcmp(FrameID, "TALB")) {
+              ESP_LOGI(TAG, "FrameID: %s", FrameID);
+              FrameData = playerState.album;
+            } else {
+              fseek(mp3File, frame_len, SEEK_CUR);
+              continue;
+            }
+            fseek(mp3File, 3, SEEK_CUR);
+            fread(FrameData, 1, frame_len - 3, mp3File);
+            ESP_LOGI(TAG, "FrameData: %s", FrameData);
+          }
+        }
        }
       else {
         ESP_LOGE(TAG, "Not an mp3 file.");
         return;
       }
      }
+     fseek(mp3File, tag_len, SEEK_SET);
      unsigned char* input = &readBuf[0];
      int bytesLeft = 0;
      int outOfData = 0;
      unsigned char* readPtr = readBuf;
      while (1) {    
-       if(playerState.paused == true) {
+        if(playerState.paused == true) {
           ESP_LOGI(TAG, "Paused.");
           //dac_mute(true);
           i2s_zero_dma_buffer(0);
@@ -341,12 +355,14 @@ void mp3Play(FILE *mp3File)
               break;
           }
           MP3GetLastFrameInfo(hMP3Decoder, &mp3FrameInfo);   
+          playerState.currentTime = ftell(mp3File) * 8 / mp3FrameInfo.bitrate;
           if(samplerate!=mp3FrameInfo.samprate)
           {
               samplerate=mp3FrameInfo.samprate;
-              //hal_i2s_init(0,samplerate,16,mp3FrameInfo.nChans);
               i2s_set_clk(0,samplerate,16,mp3FrameInfo.nChans);
-              //wm8978_samplerate_set(samplerate);
+              playerState.sampleRate = mp3FrameInfo.samprate;
+              playerState.bitsPerSample = 16;
+              playerState.totalTime = fileSize * 8 / mp3FrameInfo.bitrate;
               ESP_LOGI(TAG,"mp3file info---bitrate=%d,layer=%d,nChans=%d,samprate=%d,outputSamps=%d",mp3FrameInfo.bitrate,mp3FrameInfo.layer,mp3FrameInfo.nChans,mp3FrameInfo.samprate,mp3FrameInfo.outputSamps);
           } 
           for(int i = 0; i < mp3FrameInfo.outputSamps; ++i)
@@ -354,8 +370,7 @@ void mp3Play(FILE *mp3File)
 
           i2s_write(i2s_num,(const char*)output,mp3FrameInfo.outputSamps*2, (size_t*)(&read_bytes), 1000 / portTICK_RATE_MS);
         }
-    
-      }
+    }
     i2s_zero_dma_buffer(0);
     //i2s_driver_uninstall(0);
     MP3FreeDecoder(hMP3Decoder);
@@ -365,34 +380,6 @@ void mp3Play(FILE *mp3File)
  
     ESP_LOGI(TAG,"end mp3 decode ..");
 }
-
-// size_t bread(void *dst, size_t size, int count, audioBuffer_t *src) {
-//   if(dst == NULL || src == NULL) return 0;
-//   memcpy(dst, src->buf + src->offset, size*count);
-//   src->offset += size*count;
-//   return size*count;
-// }
-
-// void bseek(audioBuffer_t *buf, int offset, int fromwhere) {
-//   if(buf == NULL) return;
-//   switch(fromwhere) {
-//     case 0: 
-//       if(offset < 0) return;
-//       buf->offset = offset;
-//       break;
-
-//     case 1:
-//       buf->offset += offset;
-//       break;
-
-//     case 2:
-//       buf->offset = MAINBUF_SIZE + offset;
-//       break;
-
-//     default: return;
-//       break;
-//   }
-// }
 
 void taskPlay(void *parameter) {
   while(1) {
@@ -417,4 +404,121 @@ void taskPlay(void *parameter) {
 
     vTaskDelay(200 / portTICK_RATE_MS);
   }
+}
+
+int parse_music_db_priv(char *db_fn) {
+  FILE *fPtr = fopen(db_fn, "rb");
+  if(fPtr == NULL) return -1;
+
+  size_t offset = musicDb.db_offset;
+
+  if(offset % 256 != 0) offset = (int)(offset / 256) * 256;
+  
+  memset(&musicDb, 0, sizeof(music_db_t));
+  fseek(fPtr, 0, SEEK_END);
+  musicDb.db_size = ftell(fPtr);
+  rewind(fPtr);
+
+  fseek(fPtr, musicDb.db_offset, SEEK_SET);
+  int count = min((musicDb.db_size - offset) / 256, MAX_MUSICDB_NUM);
+  for(int i = 0; i < count; ++i) {
+    fread(musicDb.filename[i], sizeof(char), 128, fPtr);
+    fread(musicDb.title[i], sizeof(char), 64, fPtr);
+    fread(musicDb.author[i], sizeof(char), 64, fPtr);
+  }
+  musicDb.db_offset = offset + (count * 256);
+
+  fclose(fPtr);
+  return 0;
+}
+
+int parse_music_db_next(char *db_fn) {
+  FILE *fPtr = fopen(db_fn, "rb");
+  if(fPtr == NULL) return -1;
+
+  size_t offset = musicDb.db_offset;
+
+  memset(&musicDb, 0, sizeof(music_db_t));
+  fseek(fPtr, 0, SEEK_END);
+  musicDb.db_size = ftell(fPtr);
+  rewind(fPtr);
+
+  fseek(fPtr, musicDb.db_offset, SEEK_SET);
+  int count = min((musicDb.db_size - offset) / 256, MAX_MUSICDB_NUM);
+  for(int i = 0; i < count; ++i) {
+    fread(musicDb.filename[i], sizeof(char), 128, fPtr);
+    fread(musicDb.title[i], sizeof(char), 64, fPtr);
+    fread(musicDb.author[i], sizeof(char), 64, fPtr);
+  }
+  musicDb.db_offset = offset + (count * 256);
+  fclose(fPtr);
+  return 0;
+}
+
+static int check_music_file(char* filename) {
+  char l[5];
+  memset(l, 0, sizeof(l));
+  int len = strlen(filename);
+  for(int i = 0; i < 4; ++i) {
+    l[i] = filename[len - (4 - i)];
+  }
+  ESP_LOGI(TAG, "%s", l);
+  if(strcmp(l,".mp3") == 0 || strcmp(l, ".MP3") == 0)
+    return 1;
+  else if(strcmp(l, ".wav") == 0 || strcmp(l, ".WAV") == 0) return 2;
+  else return 0;
+}
+
+int scan_music_file(const char *basePath, int dep_cur, const int dep) {
+  ESP_LOGI(TAG, "Scan path: %s", basePath);
+  if(dep == dep_cur) return 0;
+  DIR *dir_p;
+  struct dirent *dirent_p;
+  char path[256];
+  memset(path, 0, sizeof(path));
+  strcpy(path, basePath);
+
+  dir_p = opendir(basePath);
+  if(dir_p == NULL) {
+    ESP_LOGE(TAG, "Failed to opendir: %s", basePath);
+    return -1;
+  }
+  dirent_p = readdir(dir_p);
+  while(dirent_p != NULL) {
+    if(strcmp(dirent_p->d_name, ".") == 0 || strcmp(dirent_p->d_name, "..") == 0)
+      continue;
+
+    switch(dirent_p->d_type) {
+      case 1://file
+        strcat(path, dirent_p->d_name);
+        switch(check_music_file(path)) {
+          case 1://mp3
+            ESP_LOGI(TAG, "%s/%s", basePath, dirent_p->d_name);
+            break;
+          case 2://wav
+            ESP_LOGI(TAG, "%s/%s", basePath, dirent_p->d_name);
+            break;
+          default:break;
+        }
+
+        break;
+      case 2:
+        strcat(path, dirent_p->d_name);
+        //strcat(path, "/");
+        scan_music_file(path, dep_cur + 1, dep);
+        break;
+      default:break;
+    }
+    dirent_p = readdir(dir_p);
+    memset(path, 0, sizeof(path));
+    strcpy(path, basePath);
+  }
+  return 0;
+}
+
+int create_music_db() {
+  if(!sdmmc_is_valid())
+    return -1;
+
+  return 0;
 }

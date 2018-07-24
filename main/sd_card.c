@@ -1,11 +1,10 @@
 #include "sd_card.h"
 
-#define SD_CS   15
 #define SD_PIN_NUM_CD   32
 #define SD_PIN_NUM_MISO 12
 #define SD_PIN_NUM_MOSI 13
 #define SD_PIN_NUM_CLK  14
-#define SD_PIN_NUM_CS 33
+#define SD_PIN_NUM_CS 15
 
 static const char *TAG = "sdcard";
 esp_err_t sdmmc_mount(sdmmc_card_t *card) {
@@ -19,7 +18,7 @@ esp_err_t sdmmc_mount(sdmmc_card_t *card) {
   slot_config.gpio_miso = SD_PIN_NUM_MISO;
   slot_config.gpio_mosi = SD_PIN_NUM_MOSI;
   slot_config.gpio_sck  = SD_PIN_NUM_CLK;
-  slot_config.gpio_cs   = SD_CS;
+  slot_config.gpio_cs   = SD_PIN_NUM_CS;
   slot_config.gpio_cd   = SD_PIN_NUM_CD;
   slot_config.dma_channel = 2;
 
@@ -50,4 +49,9 @@ esp_err_t sdmmc_mount(sdmmc_card_t *card) {
 
 esp_err_t sdmmc_unmount() {
   return esp_vfs_fat_sdmmc_unmount();
+}
+
+bool sdmmc_is_valid() {
+  gpio_set_direction(SD_PIN_NUM_CD, GPIO_MODE_INPUT);
+  return !gpio_get_level(SD_PIN_NUM_CD);
 }

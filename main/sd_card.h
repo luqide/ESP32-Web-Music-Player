@@ -14,4 +14,6 @@
 
 esp_err_t sdmmc_mount(sdmmc_card_t *card);
 esp_err_t sdmmc_unmount();
+bool sdmmc_is_valid();
+
 #endif

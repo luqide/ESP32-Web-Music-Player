@@ -154,9 +154,11 @@ void app_main() {
     ESP_LOGI(TAG, "UI_Char task created.");
   else ESP_LOGE(TAG, "Failed to create UI_Char task.");
 
-  if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS) 
-    ESP_LOGI(TAG, "Music Player task created.");
-  else ESP_LOGE(TAG, "Failed to create Player task.");
+  // if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS) 
+  //   ESP_LOGI(TAG, "Music Player task created.");
+  // else ESP_LOGE(TAG, "Failed to create Player task.");
+
+  scan_music_file("/sdcard/", 0, 3);
 
   //i2s init
   i2s_init();

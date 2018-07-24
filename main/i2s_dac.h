@@ -11,11 +11,17 @@
 #define PLAYMODE_REPEAT_PLAYLIST 1
 #define PLAYMODE_PLAYLIST 2
 #define PLAYMODE_RANDOM 3
-
+#define MAX_MUSICDB_NUM 16
 typedef enum {
     NONE = 0, WAV, MP3, APE, FLAC
 } musicType_t;
 
+typedef struct {
+    char filename[MAX_MUSICDB_NUM][128];
+    char title[MAX_MUSICDB_NUM][64];
+    char author[MAX_MUSICDB_NUM][64];
+    size_t db_offset, db_size;
+} music_db_t;
 typedef struct {
     char *filePath;
     void *priv, *next;
@@ -29,6 +35,8 @@ typedef struct {
     bool paused, started;
     uint16_t totalTime;
     uint16_t currentTime;
+    int sampleRate;
+    int bitsPerSample;
     char nowPlaying[128];
     char author[128];
     char album[128];
@@ -58,20 +66,8 @@ typedef struct {
 } wavProperties_t;
 /* variables hold file, state of process wav file and wav file properties */
 
-typedef struct {
-    unsigned char buf[MAINBUF_SIZE];
-    int bytesLeft;
-    bool reading;
-    size_t offset;
-} audioBuffer_t;
-
-typedef struct {
-    audioBuffer_t *buf;
-    char *url;
-    FILE *pfile;    
-} bufferFeedParameter_t;
-
 extern playerState_t playerState;
+extern music_db_t musicDb;
 
 size_t readNBytes(FILE *file, uint8_t *data, int count);
 size_t read4bytes(FILE *file, uint32_t *chunkId);
@@ -91,8 +87,9 @@ void setNowPlaying(char *str);
 bool isPaused();
 FILE* musicFileOpen();
 void taskPlay(void *parameter);
-// size_t bread(void *dst, size_t size, int count, audioBuffer_t *src);
-// void bseek(audioBuffer_t *buf, int offset, int fromwhere);
-// void taskFeedBuffer_File(void *parameter);
-// void taskFeedBuffer_Http(void *parameter);
+
+int scan_music_file(const char *basePath, int dep_cur, const int dep);
+int parse_music_db_priv(char *db_fn);
+int parse_music_db_next(char *db_fn);
+int create_music_db();
 #endif

@@ -31,12 +31,13 @@ bool wifi_connected = false;
 uint8_t menuID = 0;
 
 #define HOME_LIST_NUM 4
+#define MAX_LIST_NUM 16
 
 static const char *TAG = "UI";
 key_event_t key_event;
 int selected = 0;
 lv_obj_t *status_bar, *battery_icon, *battery_text, *volume, *wifi_icon, *playing_icon;
-lv_obj_t *screen, *home_list, *home_list_btns[HOME_LIST_NUM];
+lv_obj_t *screen, *home_list, *home_list_btns[MAX_LIST_NUM], *btn_cur, *btn_last;
 lv_obj_t *img_cover, *info_obj, *now_playing, *author, *album, *sample_info, *time_text, *time_bar, *playmode;
 lv_style_t status_bar_style, status_bar_icon_style, title_40, title_20;
 
@@ -200,12 +201,18 @@ void clear_screen() {
 void drawHomeScreen() {
 	selected = 0;
 	home_list = lv_list_create(screen, NULL);
-	lv_obj_set_size(home_list, 170, 216);
+	lv_obj_set_size(home_list, 320, 216);
 	home_list_btns[0] = lv_list_add(home_list, SYMBOL_AUDIO, "Library", NULL);
 	home_list_btns[1] = lv_list_add(home_list, SYMBOL_IMAGE, "Gallery", NULL);
 	home_list_btns[2] = lv_list_add(home_list, SYMBOL_SETTINGS, "Settings", NULL);
 	home_list_btns[3] = lv_list_add(home_list, SYMBOL_PLAY, "Now Playing", NULL);
 	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
+}
+
+void drawLibrary() {
+	home_list = lv_list_create(screen, NULL);
+	lv_obj_set_size(home_list, 320, 216);
+
 }
 
 void drawPlaying() {
@@ -242,18 +249,14 @@ void drawPlaying() {
 	time_bar = lv_bar_create(screen, NULL);
 	lv_obj_set_size(time_bar, 290, 10);
 	lv_obj_set_pos(time_bar, 15, 187);
-	lv_bar_set_value(time_bar, 25);
+	lv_bar_set_value(time_bar, 0);
 
 	time_text = lv_label_create(screen, author);
 	lv_obj_set_pos(time_text, 15, 158);
 	lv_label_set_text(time_text, "0:00 / 0:00");
 }
 
-void taskUI_Char(void *parameter) {
-	lv_theme_t *th = lv_theme_material_init(210, NULL);
-	lv_theme_set_current(th);
-
-	style_init();
+void drawStatusBar() {
 	status_bar = lv_obj_create(lv_scr_act(), NULL);
 	lv_obj_set_size(status_bar, 320, 24);
 	lv_obj_set_style(status_bar, &status_bar_style);
@@ -270,7 +273,7 @@ void taskUI_Char(void *parameter) {
 	playing_icon = lv_label_create(status_bar, NULL);
 	lv_label_set_style(playing_icon, &status_bar_icon_style);
 	lv_obj_set_pos(playing_icon, 295, 2);
-	lv_label_set_text(playing_icon, SYMBOL_PLAY);
+	lv_label_set_text(playing_icon, SYMBOL_STOP);
 
 	volume =lv_label_create(status_bar, NULL);
 	lv_label_set_style(volume, &status_bar_icon_style);
@@ -279,6 +282,14 @@ void taskUI_Char(void *parameter) {
 	wifi_icon = lv_label_create(status_bar, NULL);
 	lv_label_set_style(wifi_icon, &status_bar_icon_style);
 	lv_obj_set_pos(wifi_icon, 265, 2);
+}
+
+void taskUI_Char(void *parameter) {
+	lv_theme_t *th = lv_theme_material_init(210, NULL);
+	lv_theme_set_current(th);
+
+	style_init();
+	drawStatusBar();
 
 	screen = lv_obj_create(lv_scr_act(), NULL);
 	lv_obj_set_size(screen, 320, 216);
@@ -294,7 +305,7 @@ void taskUI_Char(void *parameter) {
 		else if(batteryPercentage > 50 && batteryPercentage <= 75) lv_label_set_text(battery_icon, SYMBOL_BATTERY_3);
 		else lv_label_set_text(battery_icon, SYMBOL_BATTERY_FULL);
 
-		char tmp_str[16];
+		char tmp_str[32];
 		memset(tmp_str, 0, sizeof(tmp_str));
 		sprintf(tmp_str, "%i%%", batteryPercentage);
 		lv_label_set_text(battery_text, tmp_str);
@@ -305,7 +316,8 @@ void taskUI_Char(void *parameter) {
 		else sprintf(tmp_str, "%s%i%%", SYMBOL_VOLUME_MAX, v);
 		lv_label_set_text(volume, tmp_str);
 
-		lv_label_set_text(playing_icon, isPaused() ? SYMBOL_PAUSE : SYMBOL_PLAY);
+		if(playerState.started == false) lv_label_set_text(playing_icon, SYMBOL_STOP);
+		else lv_label_set_text(playing_icon, isPaused() ? SYMBOL_PAUSE : SYMBOL_PLAY);
 		lv_label_set_text(wifi_icon, wifi_connected ? SYMBOL_WIFI : " ");
 
 		switch(menuID) {
@@ -318,20 +330,18 @@ void taskUI_Char(void *parameter) {
 					    		selected--;
 					    		if(selected < 0) selected = HOME_LIST_NUM - 1;
 					    		lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
-					    		lv_list_focus(home_list_btns[selected],true);
 					    		break;
 					        case KEY_NAME_DOWN:
 					        	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_REL);
 					        	selected++;
 					        	if(selected == HOME_LIST_NUM) selected = 0;
 					        	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
-					        	lv_list_focus(home_list_btns[selected],true);
 					        	break;
 					   		case KEY_NAME_MENU:
 					   			switch(selected) {
-					   				case 0:menuID = 1;clear_screen();break;
-					   				case 1:menuID = 2;clear_screen();break;
-					   				case 2:menuID = 3;clear_screen();break;
+					   				case 0:menuID = 1;clear_screen();drawLibrary();break;
+					   				case 1:break;
+					   				case 2:break;
 					   				case 3:menuID = 4;clear_screen();drawPlaying();break;
 					   				default:selected = 0;break;
 					   			}
@@ -345,7 +355,27 @@ void taskUI_Char(void *parameter) {
 			break;
 
 			case 1:
-
+				if(xQueueReceive(Queue_Key, &key_event, 100) == pdPASS) {
+				    if(key_event.pressed == false) {
+					    switch(key_event.key_name) {
+					    	case KEY_NAME_UP:
+					    		break;
+					        case KEY_NAME_DOWN:
+					        	break;
+					   		case KEY_NAME_MENU:
+					   			break;
+					     	case KEY_NAME_MID:
+					        	player_pause(!isPaused());
+					        break;
+					        case KEY_NAME_BACK:
+					        	clear_screen();
+					        	drawHomeScreen();
+					        	menuID = 0;
+					        	break;
+					     	default:break;
+					    }
+					}
+				}
 			break;
 
 			case 2:
@@ -356,7 +386,19 @@ void taskUI_Char(void *parameter) {
 
 			break;
 
-			case 4:
+			case 4: //now playing
+				memset(tmp_str, 0, sizeof(tmp_str));
+				sprintf(tmp_str, "%i:%02i / %i:%02i", playerState.currentTime / 60
+												, playerState.currentTime % 60
+												, playerState.totalTime / 60
+												, playerState.totalTime & 60);
+				lv_label_set_text(time_text, tmp_str);
+				if(playerState.totalTime != 0)
+					lv_bar_set_value(time_bar, (int)((double)playerState.currentTime / (double)playerState.totalTime * 100));
+				else lv_bar_set_value(time_bar, 0);
+				lv_label_set_text(now_playing, playerState.fileName);
+				lv_label_set_text(author, playerState.author);
+				lv_label_set_text(album, playerState.album);
 				if(xQueueReceive(Queue_Key, &key_event, 100) == pdPASS) {
 				    if(key_event.pressed == false) {
 					    switch(key_event.key_name) {
