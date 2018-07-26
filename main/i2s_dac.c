@@ -10,16 +10,20 @@
 #include "soc/io_mux_reg.h"
 #include "esp_log.h"
 #include <math.h>
-#include "ui.h"
 #include <string.h>
 #include "mp3dec.h"
-#include "i2s_dac.h"
+#include "../lvgl/lvgl.h"
 #include "sd_card.h"
+
+#include "ui.h"
+#include "i2s_dac.h"
+
 
 static const char *TAG = "CODEC";
 headerState_t state = HEADER_RIFF;
 wavProperties_t wavProps;
-
+int playlist_len, nowplay_offset;
+playlist_node_t *playlist_array;
 
 //i2s configuration
 i2s_config_t i2s_config = {
@@ -30,7 +34,7 @@ i2s_config_t i2s_config = {
     .communication_format = I2S_COMM_FORMAT_I2S,
     .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1, // high interrupt priority
     .dma_buf_count = 64,
-    .dma_buf_len = 64,   //Interrupt level 1
+    .dma_buf_len = 64,
     .use_apll = true,
 //     .fixed_mclk = 11289600
 };
@@ -52,13 +56,12 @@ playerState_t playerState = {
   .nowPlaying = "",
   .author = "",
   .album = "",
-  .playMode = PLAYMODE_PLAYLIST,
+  .playMode = PLAYMODE_REPEAT_PLAYLIST,
   .volume = 50,
   .volumeMultiplier = pow(10, -25 / 20.0),
-  .musicType = NONE
+  .musicType = NONE,
+  .musicChanged = true
 };
-
-music_db_t musicDb;
 
 
 size_t read4bytes(FILE *file, uint32_t *chunkId){
@@ -96,7 +99,7 @@ esp_err_t wavPlay(FILE *wavFile) {
         case HEADER_RIFF: {
           wavRiff_t wavRiff;
           n = readRiff(wavFile, &wavRiff);
-            if(n == 12 && wavRiff.chunkID == CCCC('R', 'I', 'F', 'F') 
+            if(n == 12 && wavRiff.chunkID == CCCC('R', 'I', 'F', 'F')
                 && wavRiff.format == CCCC('W', 'A', 'V', 'E'))
               state = HEADER_FMT;
         }
@@ -105,9 +108,9 @@ esp_err_t wavPlay(FILE *wavFile) {
           n = readProps(wavFile, &wavProps);
           if(n == 24)
             state = HEADER_DATA;
-          ESP_LOGI(TAG, "SampleRate: %i ByteRate: %i BitsPerSample: %i ", 
-            (int)wavProps.sampleRate, 
-            (int)wavProps.byteRate, 
+          ESP_LOGI(TAG, "SampleRate: %i ByteRate: %i BitsPerSample: %i ",
+            (int)wavProps.sampleRate,
+            (int)wavProps.byteRate,
             (int)wavProps.bitsPerSample);
         }
         break;
@@ -144,6 +147,12 @@ esp_err_t wavPlay(FILE *wavFile) {
             // dac_mute(true);
             while(playerState.paused == true)vTaskDelay(100 / portTICK_RATE_MS);
             ESP_LOGI(TAG, "Continued.");
+          }
+          if(playerState.started == false) {
+            playerState.started = true;
+            i2s_zero_dma_buffer(0);
+            fclose(wavFile);
+            return;
           }
           // dac_mute(false);
           int bytes = wavProps.bitsPerSample / 8 * 2 * 768;
@@ -319,15 +328,19 @@ void mp3Play(FILE *mp3File)
      int bytesLeft = 0;
      int outOfData = 0;
      unsigned char* readPtr = readBuf;
-     while (1) {    
+     while (1) {
         if(playerState.paused == true) {
           ESP_LOGI(TAG, "Paused.");
-          //dac_mute(true);
           i2s_zero_dma_buffer(0);
           while(playerState.paused == true) vTaskDelay(100 / portTICK_RATE_MS);
           ESP_LOGI(TAG, "Continued.");
         }
-        //dac_mute(false);
+        if(playerState.started == false) {
+          playerState.started = true;
+          i2s_zero_dma_buffer(0);
+          fclose(mp3File);
+          return;
+        }
         if (bytesLeft < MAINBUF_SIZE)
         {
             memmove(readBuf, readPtr, bytesLeft);
@@ -339,7 +352,7 @@ void mp3Play(FILE *mp3File)
         }
         int offset = MP3FindSyncWord(readPtr, bytesLeft);
         if (offset < 0)
-        {  
+        {
              ESP_LOGE(TAG,"MP3FindSyncWord not find");
              bytesLeft=0;
              continue;
@@ -354,17 +367,17 @@ void mp3Play(FILE *mp3File)
               ESP_LOGE(TAG,"MP3Decode failed ,code is %d ",errs);
               break;
           }
-          MP3GetLastFrameInfo(hMP3Decoder, &mp3FrameInfo);   
-          playerState.currentTime = ftell(mp3File) * 8 / mp3FrameInfo.bitrate;
+          MP3GetLastFrameInfo(hMP3Decoder, &mp3FrameInfo);
+          playerState.currentTime = (ftell(mp3File) - tag_len) * 8 / mp3FrameInfo.bitrate;
           if(samplerate!=mp3FrameInfo.samprate)
           {
               samplerate=mp3FrameInfo.samprate;
               i2s_set_clk(0,samplerate,16,mp3FrameInfo.nChans);
               playerState.sampleRate = mp3FrameInfo.samprate;
               playerState.bitsPerSample = 16;
-              playerState.totalTime = fileSize * 8 / mp3FrameInfo.bitrate;
+              playerState.totalTime = (fileSize - tag_len) * 8 / mp3FrameInfo.bitrate;
               ESP_LOGI(TAG,"mp3file info---bitrate=%d,layer=%d,nChans=%d,samprate=%d,outputSamps=%d",mp3FrameInfo.bitrate,mp3FrameInfo.layer,mp3FrameInfo.nChans,mp3FrameInfo.samprate,mp3FrameInfo.outputSamps);
-          } 
+          }
           for(int i = 0; i < mp3FrameInfo.outputSamps; ++i)
             output[i] *= playerState.volumeMultiplier;
 
@@ -375,83 +388,59 @@ void mp3Play(FILE *mp3File)
     //i2s_driver_uninstall(0);
     MP3FreeDecoder(hMP3Decoder);
     free(readBuf);
-    free(output);  
+    free(output);
     fclose(mp3File);
- 
+
     ESP_LOGI(TAG,"end mp3 decode ..");
 }
 
 void taskPlay(void *parameter) {
   while(1) {
-    if(playerState.started) {
-      playerState.filePtr = fopen(playerState.fileName, "rb");
-      if(playerState.filePtr != NULL) {
-        parseMusicType();
-        switch(playerState.musicType) {
-          case WAV:
-            wavPlay(playerState.filePtr);
-          break;
+    playerState.musicChanged = true;
+    setNowPlaying(playlist_array[nowplay_offset].filePath);
+    playerState.filePtr = fopen(playerState.fileName, "rb");
+    if(playerState.filePtr != NULL) {
+      parseMusicType();
+      switch(playerState.musicType) {
+        case WAV:
+          wavPlay(playerState.filePtr);
+        break;
 
-          case MP3:
-            mp3Play(playerState.filePtr);
-          break;
+        case MP3:
+          mp3Play(playerState.filePtr);
+        break;
 
-          default:break;
-        }
-        fclose(playerState.filePtr);
+        default:break;
+      }
+      fclose(playerState.filePtr);
+    }
+    playerState.totalTime = 0;
+    playerState.currentTime = 0;
+    if(playerState.started != false) {
+      switch(playerState.playMode) {
+        case PLAYMODE_RANDOM:
+          srand(time(NULL));
+          nowplay_offset = rand() % (playlist_len + 1);
+        break;
+        case PLAYMODE_REPEAT_PLAYLIST:
+          nowplay_offset++;
+          if(nowplay_offset > playlist_len) nowplay_offset = 0;
+        break;
+        case PLAYMODE_REPEAT:break;
+        default:break;
       }
     }
-
-    vTaskDelay(200 / portTICK_RATE_MS);
+    vTaskDelay(1000 / portTICK_RATE_MS);
   }
 }
 
 int parse_music_db_priv(char *db_fn) {
-  FILE *fPtr = fopen(db_fn, "rb");
-  if(fPtr == NULL) return -1;
 
-  size_t offset = musicDb.db_offset;
-
-  if(offset % 256 != 0) offset = (int)(offset / 256) * 256;
-  
-  memset(&musicDb, 0, sizeof(music_db_t));
-  fseek(fPtr, 0, SEEK_END);
-  musicDb.db_size = ftell(fPtr);
-  rewind(fPtr);
-
-  fseek(fPtr, musicDb.db_offset, SEEK_SET);
-  int count = min((musicDb.db_size - offset) / 256, MAX_MUSICDB_NUM);
-  for(int i = 0; i < count; ++i) {
-    fread(musicDb.filename[i], sizeof(char), 128, fPtr);
-    fread(musicDb.title[i], sizeof(char), 64, fPtr);
-    fread(musicDb.author[i], sizeof(char), 64, fPtr);
-  }
-  musicDb.db_offset = offset + (count * 256);
-
-  fclose(fPtr);
   return 0;
 }
 
 int parse_music_db_next(char *db_fn) {
-  FILE *fPtr = fopen(db_fn, "rb");
-  if(fPtr == NULL) return -1;
 
-  size_t offset = musicDb.db_offset;
-
-  memset(&musicDb, 0, sizeof(music_db_t));
-  fseek(fPtr, 0, SEEK_END);
-  musicDb.db_size = ftell(fPtr);
-  rewind(fPtr);
-
-  fseek(fPtr, musicDb.db_offset, SEEK_SET);
-  int count = min((musicDb.db_size - offset) / 256, MAX_MUSICDB_NUM);
-  for(int i = 0; i < count; ++i) {
-    fread(musicDb.filename[i], sizeof(char), 128, fPtr);
-    fread(musicDb.title[i], sizeof(char), 64, fPtr);
-    fread(musicDb.author[i], sizeof(char), 64, fPtr);
-  }
-  musicDb.db_offset = offset + (count * 256);
-  fclose(fPtr);
   return 0;
 }
 
@@ -462,11 +451,11 @@ static int check_music_file(char* filename) {
   for(int i = 0; i < 4; ++i) {
     l[i] = filename[len - (4 - i)];
   }
-  ESP_LOGI(TAG, "%s", l);
   if(strcmp(l,".mp3") == 0 || strcmp(l, ".MP3") == 0)
     return 1;
   else if(strcmp(l, ".wav") == 0 || strcmp(l, ".WAV") == 0) return 2;
-  else return 0;
+
+  return 0;
 }
 
 int scan_music_file(const char *basePath, int dep_cur, const int dep) {
@@ -491,14 +480,11 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
     switch(dirent_p->d_type) {
       case 1://file
         strcat(path, dirent_p->d_name);
-        switch(check_music_file(path)) {
-          case 1://mp3
-            ESP_LOGI(TAG, "%s/%s", basePath, dirent_p->d_name);
-            break;
-          case 2://wav
-            ESP_LOGI(TAG, "%s/%s", basePath, dirent_p->d_name);
-            break;
-          default:break;
+        if(check_music_file(path) != 0) {
+          memset(playlist_array[playlist_len].filePath, 0, sizeof(playlist_array[playlist_len].filePath));
+          sprintf(playlist_array[playlist_len].filePath, "%s/%s", basePath, dirent_p->d_name);
+          ESP_LOGI(TAG, "File found: %s", playlist_array[playlist_len].filePath);
+          playlist_len++;
         }
 
         break;

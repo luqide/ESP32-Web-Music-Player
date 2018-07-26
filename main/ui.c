@@ -17,6 +17,7 @@
 #include "driver/adc.h"
 #include "picojpeg.h"
 #include "../lvgl/lvgl.h"
+#include "../lvgl/lv_hal/lv_hal_indev.h"
 
 #include "i2s_dac.h"
 #include "keypad_control.h"
@@ -30,17 +31,18 @@ int rawData = 0;
 bool wifi_connected = false;
 uint8_t menuID = 0;
 
-#define HOME_LIST_NUM 4
-#define MAX_LIST_NUM 16
-
 static const char *TAG = "UI";
+lv_theme_t *th;
 key_event_t key_event;
 int selected = 0;
 lv_obj_t *status_bar, *battery_icon, *battery_text, *volume, *wifi_icon, *playing_icon;
-lv_obj_t *screen, *home_list, *home_list_btns[MAX_LIST_NUM], *btn_cur, *btn_last;
+lv_obj_t *screen;
 lv_obj_t *img_cover, *info_obj, *now_playing, *author, *album, *sample_info, *time_text, *time_bar, *playmode;
-lv_style_t status_bar_style, status_bar_icon_style, title_40, title_20;
+lv_style_t status_bar_style, status_bar_icon_style, title_20, style_focused;
+lv_group_t *group;
 
+static lv_res_t onclick_homelist(lv_obj_t * list_btn);
+static lv_res_t onclick_library(lv_obj_t * list_btn);
 typedef struct {
 	size_t inBufSize, inBufOffset;
 	FILE *fPtr;
@@ -49,9 +51,9 @@ typedef struct {
 
 JPEG_Decoder_t *JPEG_Decoder;
 unsigned char pjpeg_callback (
-	unsigned char* pBuf, 
-	unsigned char buf_size, 
-	unsigned char *pBytes_actually_read, 
+	unsigned char* pBuf,
+	unsigned char buf_size,
+	unsigned char *pBytes_actually_read,
 	void *pCallback_data) {
 
 	unsigned int n;
@@ -87,7 +89,7 @@ static int lv_img_set_src_jpg(lv_obj_t *img_obj, char *fname, uint8_t *buf, int 
 		fseek(JPEG_Decoder->fPtr, 0, SEEK_END);
 		JPEG_Decoder->inBufSize = ftell(JPEG_Decoder->fPtr);
 		rewind(JPEG_Decoder->fPtr);
-	} 
+	}
 	else {
 		if(buf == NULL) {
 			free(JPEG_Decoder);
@@ -106,7 +108,7 @@ static int lv_img_set_src_jpg(lv_obj_t *img_obj, char *fname, uint8_t *buf, int 
 	ESP_LOGI(TAG, "Image size: %ix%i", image_info.m_width, image_info.m_height);
 	ESP_LOGI(TAG, "MCU size: %ix%i", image_info.m_MCUWidth, image_info.m_MCUHeight);
 
-	
+
 
 	status = 0;
 	int pos = 0;
@@ -115,13 +117,13 @@ static int lv_img_set_src_jpg(lv_obj_t *img_obj, char *fname, uint8_t *buf, int 
 	// 	if(status) {
 	// 		if(status == PJPG_NO_MORE_BLOCKS) break;
 	// 		else return 0;
-	// 	} 
+	// 	}
 	// 	for(int mX = 0; mX < image_info.m_MCUSPerCol; ++mX) {
 	// 		status = pjpeg_decode_mcu();
 	// 		if(status) {
 	// 			if(status == PJPG_NO_MORE_BLOCKS) break;
 	// 			else return 0;
-	// 		} 
+	// 		}
 	// 		if(image_info.m_scanType == PJPG_GRAYSCALE) {
 	// 			for(int i = 0; i < image_info.m_MCUHeight; ++i) {
 	// 				for(int j = 0; j < image_info.m_MCUWidth; ++j) {
@@ -147,7 +149,7 @@ static int lv_img_set_src_jpg(lv_obj_t *img_obj, char *fname, uint8_t *buf, int 
 	// 		pos += 2;
 	// 	}
 	// }
-	
+
 	free(JPEG_Decoder);
 	return 1;
 }
@@ -163,33 +165,38 @@ static void style_init() {
 	lv_style_copy(&status_bar_icon_style, &lv_style_plain);
 	status_bar_icon_style.text.color = LV_COLOR_HEX(0xFFFFFF);
 
-	lv_style_copy(&title_40, &lv_style_plain);
-	title_40.text.color = LV_COLOR_WHITE;
-	title_40.text.font = &lv_font_dejavu_40;
-
 	lv_style_copy(&title_20, &lv_style_plain);
 	title_20.text.color = LV_COLOR_WHITE;
 	title_20.text.font = &lv_font_dejavu_20;
 }
 
-void getBatteryPecentage() {
+lv_group_style_mod_func_t style_mod_cb(lv_style_t *style) {
+	return &lv_style_transp;
+}
+
+int getBatteryPecentage() {
 	adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);
-    rawData = adc1_get_raw(ADC1_CHANNEL_0);
+  adc1_config_channel_atten(ADC1_CHANNEL_0,ADC_ATTEN_DB_11);
+  rawData = adc1_get_raw(ADC1_CHANNEL_0);
 
 	ESP_LOGI(TAG, "ADC rawData: %i", rawData);
-    batteryVoltage = (double)rawData / 4096.0 * 3578.0 * 175.0 / 100.0;
-    batteryPercentage = ((double)batteryVoltage - 3700) / 500.0 * 100;
+  return  (int)((double)rawData / 4096.0 * 3578.0 * 175.0 / 100.0);
 }
 
 void taskBattery(void *parameter) {
 	TickType_t xLastWakeTime;
- 	const TickType_t xFrequency = 15*1000 / portTICK_RATE_MS;
+ 	const TickType_t xFrequency = 10*1000 / portTICK_RATE_MS;
  	xLastWakeTime = xTaskGetTickCount();
+	int data = 0;
 	while(1) {
-		getBatteryPecentage();
+		data = 0;
+		for(int i = 0; i < 5; ++i) {
+				data += getBatteryPecentage();
+				vTaskDelay(1000 / portTICK_RATE_MS);
+		}
+		batteryVoltage = data / 5;
 		ESP_LOGI(TAG, "Battery voltage: %i mV", batteryVoltage);
-
+		batteryPercentage = ((double)batteryVoltage - 3700) / 500.0 * 100;
 		ESP_LOGI(TAG, "Battery pecentage: %i %%", batteryPercentage);
 		vTaskDelayUntil(&xLastWakeTime, xFrequency);
 	}
@@ -199,20 +206,26 @@ void clear_screen() {
 }
 
 void drawHomeScreen() {
-	selected = 0;
-	home_list = lv_list_create(screen, NULL);
+	lv_obj_t *home_list = lv_list_create(screen, NULL);
 	lv_obj_set_size(home_list, 320, 216);
-	home_list_btns[0] = lv_list_add(home_list, SYMBOL_AUDIO, "Library", NULL);
-	home_list_btns[1] = lv_list_add(home_list, SYMBOL_IMAGE, "Gallery", NULL);
-	home_list_btns[2] = lv_list_add(home_list, SYMBOL_SETTINGS, "Settings", NULL);
-	home_list_btns[3] = lv_list_add(home_list, SYMBOL_PLAY, "Now Playing", NULL);
-	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
+	lv_list_add(home_list, SYMBOL_AUDIO, "Library", onclick_homelist);
+	lv_list_add(home_list, SYMBOL_IMAGE, "Gallery", onclick_homelist);
+	lv_list_add(home_list, SYMBOL_SETTINGS, "Settings", onclick_homelist);
+	lv_list_add(home_list, SYMBOL_PLAY, "Now Playing", onclick_homelist);
+	lv_group_add_obj(group, home_list);
+	lv_group_focus_obj(home_list);
 }
 
 void drawLibrary() {
-	home_list = lv_list_create(screen, NULL);
-	lv_obj_set_size(home_list, 320, 216);
+	lv_obj_t *library_list = lv_list_create(screen, NULL);
+	lv_obj_set_size(library_list, 320, 216);
+	lv_group_add_obj(group, library_list);
 
+	for(int i = 0; i <= playlist_len; ++i) {
+		lv_list_add(library_list, SYMBOL_AUDIO, playlist_array[i].filePath, onclick_library);
+	}
+
+	lv_group_focus_obj(library_list);
 }
 
 void drawPlaying() {
@@ -234,12 +247,14 @@ void drawPlaying() {
 	author = lv_label_create(info_obj, NULL);
 	lv_label_set_style(author, &title_20);
 	lv_obj_set_pos(author, 0, 30);
-	lv_label_set_text(author, playerState.author);
+	//lv_label_set_text(author, playerState.author);
+	lv_label_set_text(author, "");
 	lv_label_set_long_mode(author, LV_LABEL_LONG_SCROLL);
 
 	album = lv_label_create(info_obj, author);
 	lv_obj_set_pos(album, 0, 60);
-	lv_label_set_text(album, playerState.album);
+	// lv_label_set_text(album, playerState.album);
+	lv_label_set_text(author, "");
 	lv_label_set_long_mode(album, LV_LABEL_LONG_SCROLL);
 
 	sample_info = lv_label_create(info_obj, author);
@@ -265,10 +280,10 @@ void drawStatusBar() {
 	lv_label_set_style(battery_icon, &status_bar_icon_style);
 	lv_obj_set_pos(battery_icon, 5, 2);
 
-	battery_text = lv_label_create(status_bar, NULL);
-	lv_label_set_style(battery_text, &status_bar_icon_style);
-	lv_obj_set_pos(battery_text, 35, 3);
-	lv_label_set_text(battery_text, "100%");
+	// battery_text = lv_label_create(status_bar, NULL);
+	// lv_label_set_style(battery_text, &status_bar_icon_style);
+	// lv_obj_set_pos(battery_text, 35, 3);
+	// lv_label_set_text(battery_text, "100%");
 
 	playing_icon = lv_label_create(status_bar, NULL);
 	lv_label_set_style(playing_icon, &status_bar_icon_style);
@@ -277,7 +292,7 @@ void drawStatusBar() {
 
 	volume =lv_label_create(status_bar, NULL);
 	lv_label_set_style(volume, &status_bar_icon_style);
-	lv_obj_set_pos(volume, 85, 2);
+	lv_obj_set_pos(volume, 40, 2);
 
 	wifi_icon = lv_label_create(status_bar, NULL);
 	lv_label_set_style(wifi_icon, &status_bar_icon_style);
@@ -285,7 +300,7 @@ void drawStatusBar() {
 }
 
 void taskUI_Char(void *parameter) {
-	lv_theme_t *th = lv_theme_material_init(210, NULL);
+	th = lv_theme_material_init(210, NULL);
 	lv_theme_set_current(th);
 
 	style_init();
@@ -296,8 +311,12 @@ void taskUI_Char(void *parameter) {
 	lv_obj_set_pos(screen, 0, 24);
 	lv_obj_set_style(screen, &status_bar_style);
 
+	group = lv_group_create();
+	lv_indev_set_group(keypad_indev, group);
+	lv_group_set_style_mod_cb(group, style_mod_cb);
 	drawHomeScreen();
-	
+
+	lv_indev_state_t l_state = LV_INDEV_STATE_REL;
 	while(1) {
 		if(batteryPercentage == 0) lv_label_set_text(battery_icon, SYMBOL_BATTERY_EMPTY);
 		else if(batteryPercentage <=25) lv_label_set_text(battery_icon, SYMBOL_BATTERY_1);
@@ -306,9 +325,9 @@ void taskUI_Char(void *parameter) {
 		else lv_label_set_text(battery_icon, SYMBOL_BATTERY_FULL);
 
 		char tmp_str[32];
-		memset(tmp_str, 0, sizeof(tmp_str));
-		sprintf(tmp_str, "%i%%", batteryPercentage);
-		lv_label_set_text(battery_text, tmp_str);
+		// memset(tmp_str, 0, sizeof(tmp_str));
+		// sprintf(tmp_str, "%i%%", batteryPercentage);
+		// lv_label_set_text(battery_text, tmp_str);
 
 		memset(tmp_str, 0, sizeof(tmp_str));
 		int v = getVolumePercentage();
@@ -320,60 +339,20 @@ void taskUI_Char(void *parameter) {
 		else lv_label_set_text(playing_icon, isPaused() ? SYMBOL_PAUSE : SYMBOL_PLAY);
 		lv_label_set_text(wifi_icon, wifi_connected ? SYMBOL_WIFI : " ");
 
+		lv_indev_data_t i_data;
+		lv_indev_read(keypad_indev, &i_data);
 		switch(menuID) {
 			case 0: // home screen
-				if(xQueueReceive(Queue_Key, &key_event, 100) == pdPASS) {
-				    if(key_event.pressed == false) {
-					    switch(key_event.key_name) {
-					    	case KEY_NAME_UP:
-					    		lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_REL);
-					    		selected--;
-					    		if(selected < 0) selected = HOME_LIST_NUM - 1;
-					    		lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
-					    		break;
-					        case KEY_NAME_DOWN:
-					        	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_REL);
-					        	selected++;
-					        	if(selected == HOME_LIST_NUM) selected = 0;
-					        	lv_btn_set_state(home_list_btns[selected], LV_BTN_STATE_PR);
-					        	break;
-					   		case KEY_NAME_MENU:
-					   			switch(selected) {
-					   				case 0:menuID = 1;clear_screen();drawLibrary();break;
-					   				case 1:break;
-					   				case 2:break;
-					   				case 3:menuID = 4;clear_screen();drawPlaying();break;
-					   				default:selected = 0;break;
-					   			}
-					   			break;
-					     	case KEY_NAME_MID:
-					        	player_pause(!isPaused());break;
-					     	default:break;
-					    }
-					}
-				}
 			break;
 
-			case 1:
-				if(xQueueReceive(Queue_Key, &key_event, 100) == pdPASS) {
-				    if(key_event.pressed == false) {
-					    switch(key_event.key_name) {
-					    	case KEY_NAME_UP:
-					    		break;
-					        case KEY_NAME_DOWN:
-					        	break;
-					   		case KEY_NAME_MENU:
-					   			break;
-					     	case KEY_NAME_MID:
-					        	player_pause(!isPaused());
-					        break;
-					        case KEY_NAME_BACK:
-					        	clear_screen();
-					        	drawHomeScreen();
-					        	menuID = 0;
-					        	break;
-					     	default:break;
-					    }
+			case 1: //Library
+				if(l_state == LV_INDEV_STATE_PR && i_data.state == LV_INDEV_STATE_REL) {
+					switch (i_data.key) {
+						case LV_GROUP_KEY_ESC:
+							menuID = 0;
+							clear_screen();
+							drawHomeScreen();
+						break;
 					}
 				}
 			break;
@@ -396,40 +375,81 @@ void taskUI_Char(void *parameter) {
 				if(playerState.totalTime != 0)
 					lv_bar_set_value(time_bar, (int)((double)playerState.currentTime / (double)playerState.totalTime * 100));
 				else lv_bar_set_value(time_bar, 0);
-				lv_label_set_text(now_playing, playerState.fileName);
-				lv_label_set_text(author, playerState.author);
-				lv_label_set_text(album, playerState.album);
-				if(xQueueReceive(Queue_Key, &key_event, 100) == pdPASS) {
-				    if(key_event.pressed == false) {
-					    switch(key_event.key_name) {
-					    	case KEY_NAME_UP:
-					    		setVolume(getVolumePercentage() + 10);
-					    		break;
-					        case KEY_NAME_DOWN:
-					        	setVolume(getVolumePercentage() - 10);
-					        	break;
-					   		case KEY_NAME_MENU:
 
-					   			break;
-					     	case KEY_NAME_MID:
-					        	player_pause(!isPaused());
-					        break;
-					        case KEY_NAME_BACK:
-					        	clear_screen();
-					        	drawHomeScreen();
-					        	menuID = 0;
-					        	break;
-					     	default:break;
-					    }
-					}
+				if(playerState.musicChanged == true) {
+					lv_label_set_text(now_playing, playerState.fileName);
+					// lv_label_set_text(author, playerState.author);
+					// lv_label_set_text(album, playerState.album);
+					playerState.musicChanged = false;
 				}
+
+				if(l_state == LV_INDEV_STATE_PR && i_data.state == LV_INDEV_STATE_REL) {
+					switch (i_data.key) {
+						case LV_GROUP_KEY_UP:
+							if(getVolumePercentage() >= 90) setVolume(100);
+							else setVolume(getVolumePercentage() + 10);
+						break;
+						case LV_GROUP_KEY_DOWN:
+							if(getVolumePercentage() <= 10) setVolume(0);
+							else setVolume(getVolumePercentage() - 10);
+						break;
+						case LV_GROUP_KEY_LEFT:
+							playerState.started = false;
+							nowplay_offset--;
+							if(nowplay_offset < 0) nowplay_offset = playlist_len;
+						break;
+						case LV_GROUP_KEY_RIGHT:
+							playerState.started = false;
+							nowplay_offset++;
+							if(nowplay_offset > playlist_len) nowplay_offset = 0;
+						break;
+						case LV_GROUP_KEY_ESC:
+							menuID = 0;
+							clear_screen();
+							drawHomeScreen();
+						break;
+					}
+   			}
 			break;
 			default:break;
 		}
+		l_state = i_data.state;
 		vTaskDelay(50 / portTICK_RATE_MS);
 	}
 }
 
 void wifi_set_stat(bool c) {
 	wifi_connected = c;
+}
+
+static lv_res_t onclick_homelist(lv_obj_t * list_btn) {
+	char *text = lv_list_get_btn_text(list_btn);
+
+	if(strcmp(text, "Library") == 0) {
+		clear_screen();
+		drawLibrary();
+		menuID = 1;
+	} else if(strcmp(text, "Now Playing") == 0) {
+		clear_screen();
+		drawPlaying();
+		menuID = 4;
+	}
+
+  return LV_RES_OK; /*Return OK because the list is not deleted*/
+}
+
+static lv_res_t onclick_library(lv_obj_t * list_btn) {
+	char *fn = lv_list_get_btn_text(list_btn);
+	ESP_LOGI(TAG, "Now playing: %s", fn);
+	for(int i = 0; i <= nowplay_offset; ++i) {
+		if(strcmp(playlist_array[i].filePath, fn) == 0){
+			nowplay_offset = i;
+			break;
+		}
+	}
+	setNowPlaying(fn);
+	player_pause(false);
+	playerState.started = false;
+
+	return LV_RES_OK;
 }

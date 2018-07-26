@@ -6,22 +6,16 @@
 #define KEY_PRESSED 1
 #define KEY_RELEASED 0
 
-enum key_name {
-	KEY_NAME_UP = 0,
-	KEY_NAME_DOWN,
-	KEY_NAME_LEFT,
-	KEY_NAME_RIGHT,
-	KEY_NAME_MID,
-	KEY_NAME_MENU,
-	KEY_NAME_BACK
-};
+#define KEY_MID 0x70
 
 typedef struct {
-	int key_name;
-	bool pressed;
+	uint32_t key_name;
+	lv_indev_state_t state;
 } key_event_t;
 
+extern lv_indev_t *keypad_indev;
 extern QueueHandle_t Queue_Key;
 void taskScanKey(void *parameter);
 esp_err_t keyQueueCreate();
+bool keypad_read(lv_indev_data_t *data);
 #endif

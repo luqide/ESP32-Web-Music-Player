@@ -17,15 +17,11 @@ typedef enum {
 } musicType_t;
 
 typedef struct {
-    char filename[MAX_MUSICDB_NUM][128];
-    char title[MAX_MUSICDB_NUM][64];
-    char author[MAX_MUSICDB_NUM][64];
-    size_t db_offset, db_size;
-} music_db_t;
-typedef struct {
-    char *filePath;
-    void *priv, *next;
-} playlist_node_t;  
+    char filePath[256];
+} playlist_node_t;
+
+extern int playlist_len, nowplay_offset;
+extern playlist_node_t *playlist_array;
 /* these are data structures to process wav file */
 typedef enum {
     HEADER_RIFF, HEADER_FMT, HEADER_DATA, DATA
@@ -46,6 +42,7 @@ typedef struct {
     int volume; //0 - 100%
     double volumeMultiplier;
     musicType_t musicType;
+    bool musicChanged;
 } playerState_t;
 
 typedef struct {
@@ -67,7 +64,6 @@ typedef struct {
 /* variables hold file, state of process wav file and wav file properties */
 
 extern playerState_t playerState;
-extern music_db_t musicDb;
 
 size_t readNBytes(FILE *file, uint8_t *data, int count);
 size_t read4bytes(FILE *file, uint32_t *chunkId);
@@ -92,4 +88,5 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep);
 int parse_music_db_priv(char *db_fn);
 int parse_music_db_next(char *db_fn);
 int create_music_db();
+
 #endif

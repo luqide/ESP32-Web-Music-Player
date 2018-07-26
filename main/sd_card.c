@@ -14,6 +14,7 @@ esp_err_t sdmmc_mount(sdmmc_card_t *card) {
 
   sdmmc_host_t host = SDSPI_HOST_DEFAULT();
   host.slot = HSPI_HOST;
+  host.max_freq_khz = 20*1000;
   sdspi_slot_config_t slot_config = SDSPI_SLOT_CONFIG_DEFAULT();
   slot_config.gpio_miso = SD_PIN_NUM_MISO;
   slot_config.gpio_mosi = SD_PIN_NUM_MOSI;

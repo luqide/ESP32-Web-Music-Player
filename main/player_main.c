@@ -38,8 +38,6 @@ static const char *TAG = "APP_MAIN";
 static esp_err_t wifi_event_handler(void *ctx, system_event_t *event);
 static void lv_tick_task(void);
 
-bool keypad_read(lv_indev_data_t *data);
-
 typedef FILE* pc_file_t;
 static lv_fs_res_t pcfs_open(void * file_p, const char * fn, lv_fs_mode_t mode);
 static lv_fs_res_t pcfs_close(void * file_p);
@@ -47,7 +45,7 @@ static lv_fs_res_t pcfs_read(void * file_p, void * buf, uint32_t btr, uint32_t *
 static lv_fs_res_t pcfs_seek(void * file_p, uint32_t pos);
 static lv_fs_res_t pcfs_tell(void * file_p, uint32_t * pos_p);
 
-TaskHandle_t keyHandle = NULL; 
+TaskHandle_t keyHandle = NULL;
 TaskHandle_t playerHandle = NULL;
 TaskHandle_t uiHandle = NULL;
 TaskHandle_t batHandle = NULL;
@@ -66,7 +64,7 @@ void app_main() {
     .max_files = 5,
     .format_if_mount_failed = false
   };
-  
+
   // Use settings defined above to initialize and mount SPIFFS filesystem.
   // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
   ret = esp_vfs_spiffs_register(&conf);
@@ -112,11 +110,11 @@ void app_main() {
 
 
   //set up littlevgl input device
-  // lv_indev_drv_t indev_drv;
-  // lv_indev_drv_init(&indev_drv);
-  // indev_drv.type = LV_INDEV_TYPE_KEYPAD;
-  // indev_drv.read = keypad_read;
-  // lv_indev_drv_register(&indev_drv);
+  lv_indev_drv_t indev_drv;
+  lv_indev_drv_init(&indev_drv);
+  indev_drv.type = LV_INDEV_TYPE_KEYPAD;
+  indev_drv.read = keypad_read;
+  keypad_indev = lv_indev_drv_register(&indev_drv);
 
   //WiFi Init
   nvs_flash_init();
@@ -142,30 +140,35 @@ void app_main() {
 
   //keypad init
   ESP_ERROR_CHECK(keyQueueCreate());
-  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",2000,NULL,(portPRIVILEGE_BIT | 2),&keyHandle,1) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskScanKey,"KEYSCAN",2000,NULL,(portPRIVILEGE_BIT | 3),&keyHandle,1) == pdPASS)
     ESP_LOGI(TAG, "KeyScan task created.");
   else ESP_LOGE(TAG, "Failed to create KeyScan task.");
   //battery task init
-  if(xTaskCreatePinnedToCore(taskBattery,"BATTERY",2000,NULL,(portPRIVILEGE_BIT | 2),&batHandle,1) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskBattery,"BATTERY",2000,NULL,(portPRIVILEGE_BIT | 2),&batHandle,1) == pdPASS)
     ESP_LOGI(TAG, "Battery voltage scanning task created.");
   else ESP_LOGE(TAG, "Failed to create Battery voltage scanning task.");
 
-  if(xTaskCreatePinnedToCore(taskUI_Char,"UI",8192,NULL,(portPRIVILEGE_BIT | 4),&uiHandle,0) == pdPASS) 
+  if(xTaskCreatePinnedToCore(taskUI_Char,"UI",8000,NULL,(portPRIVILEGE_BIT | 4),&uiHandle,0) == pdPASS)
     ESP_LOGI(TAG, "UI_Char task created.");
   else ESP_LOGE(TAG, "Failed to create UI_Char task.");
 
-  // if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS) 
-  //   ESP_LOGI(TAG, "Music Player task created.");
-  // else ESP_LOGE(TAG, "Failed to create Player task.");
 
+  playlist_len = 0;
+  nowplay_offset = 0;
+  playlist_array = heap_caps_malloc(sizeof(playlist_node_t) * 256, MALLOC_CAP_SPIRAM);
+  memset(playlist_array, 0, sizeof(playlist_node_t) * 256);
   scan_music_file("/sdcard/", 0, 3);
 
   //i2s init
   i2s_init();
-  setNowPlaying("/sdcard/MP3/Do You Wanna Build a Snowman.mp3");
   player_pause(false);
   playerState.started = true;
 
+
+  if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS)
+    ESP_LOGI(TAG, "Music Player task created.");
+  else ESP_LOGE(TAG, "Failed to create Player task.");
+  
   esp_register_freertos_tick_hook(lv_tick_task);
   while(1) {
     vTaskDelay(5 / portTICK_RATE_MS);

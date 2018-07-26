@@ -5,8 +5,9 @@
   #define min(a,b) (((a) < (b)) ? (a) : (b))
 #endif
 
-void lockSpi(bool lock);
-void getBatteryPecentage();
+extern lv_obj_t *img_cover, *info_obj, *now_playing, *author, *album, *sample_info, *time_text, *time_bar, *playmode;
+
+int getBatteryPecentage();
 void taskBattery(void *parameter);
 void taskUI_Char(void *parameter);
 void wifi_set_stat(bool c);
