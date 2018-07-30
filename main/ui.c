@@ -17,13 +17,13 @@
 #include "driver/adc.h"
 #include "picojpeg.h"
 #include "../lvgl/lvgl.h"
-#include "../lvgl/lv_hal/lv_hal_indev.h"
 
 #include "i2s_dac.h"
 #include "keypad_control.h"
 #include "ui.h"
 
 LV_IMG_DECLARE(default_cover);
+LV_FONT_DECLEAR(hansans_normal_20);
 
 int batteryVoltage = 0;
 int batteryPercentage = 0;

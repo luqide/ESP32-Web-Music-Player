@@ -1,3 +1,4 @@
+
 #
 # Component Makefile
 #
@@ -12,5 +13,5 @@ COMPONENT_SRCDIRS := . \
 	lv_misc \
 	lv_misc/lv_fonts \
 	lv_themes
-	
+
 COMPONENT_ADD_INCLUDEDIRS := $(COMPONENT_SRCDIRS) ..
