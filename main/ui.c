@@ -23,7 +23,8 @@
 #include "ui.h"
 
 LV_IMG_DECLARE(default_cover);
-LV_FONT_DECLEAR(hansans_normal_20);
+LV_FONT_DECLARE(hansans_20_cn);
+LV_FONT_DECLARE(hansans_20_jp);
 
 int batteryVoltage = 0;
 int batteryPercentage = 0;
@@ -165,9 +166,13 @@ static void style_init() {
 	lv_style_copy(&status_bar_icon_style, &lv_style_plain);
 	status_bar_icon_style.text.color = LV_COLOR_HEX(0xFFFFFF);
 
+	lv_font_add(&hansans_20_cn, &lv_font_dejavu_20);
+	lv_font_add(&hansans_20_jp, &lv_font_dejavu_20);
+
+
 	lv_style_copy(&title_20, &lv_style_plain);
 	title_20.text.color = LV_COLOR_WHITE;
-	title_20.text.font = &lv_font_dejavu_20;
+	title_20.text.font = &hansans_20_cn;
 }
 
 lv_group_style_mod_func_t style_mod_cb(lv_style_t *style) {

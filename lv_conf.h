@@ -1,6 +1,6 @@
 /**
  * @file lv_conf.h
- * 
+ *
  */
 
 #ifndef LV_CONF_H
@@ -108,10 +108,10 @@
 #define USE_LV_FONT_DEJAVU_10_CYRILLIC     0
 #define USE_LV_FONT_SYMBOL_10              0
 
-#define USE_LV_FONT_DEJAVU_20              4
+#define USE_LV_FONT_DEJAVU_20              2
 #define USE_LV_FONT_DEJAVU_20_LATIN_SUP    0
 #define USE_LV_FONT_DEJAVU_20_CYRILLIC     0
-#define USE_LV_FONT_SYMBOL_20              4
+#define USE_LV_FONT_SYMBOL_20              2
 
 #define USE_LV_FONT_DEJAVU_30              4
 #define USE_LV_FONT_DEJAVU_30_LATIN_SUP    0
@@ -130,7 +130,7 @@
 #define LV_OBJ_FREE_PTR         1           /*Enable the free pointer attribute*/
 
 /*==================
- *  LV OBJ X USAGE 
+ *  LV OBJ X USAGE
  *================*/
 /*
  * Documentation of the object types: https://littlevgl.com/object-types
