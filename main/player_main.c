@@ -58,33 +58,33 @@ void app_main() {
   gpio_set_level(PIN_PD, 1);
 
   //spiffs mount
-  // esp_vfs_spiffs_conf_t conf = {
-  //   .base_path = "/spiffs",
-  //   .partition_label = NULL,
-  //   .max_files = 5,
-  //   .format_if_mount_failed = false
-  // };
-  //
-  // // Use settings defined above to initialize and mount SPIFFS filesystem.
-  // // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
-  // ret = esp_vfs_spiffs_register(&conf);
-  //
-  // if (ret != ESP_OK) {
-  //   if (ret == ESP_FAIL) {
-  //       ESP_LOGE(TAG, "Failed to mount or format filesystem");
-  //   } else if (ret == ESP_ERR_NOT_FOUND) {
-  //       ESP_LOGE(TAG, "Failed to find SPIFFS partition");
-  //   } else {
-  //       ESP_LOGE(TAG, "Failed to initialize SPIFFS (%d)", ret);
-  //   }
-  //   return;
-  // }
-  //
-  // ESP_LOGI(TAG, "Mount spiffs succeeded.");
-  //
-  // uint32_t tot=0, used=0;
-  // esp_spiffs_info(NULL, &tot, &used);
-  // ESP_LOGI("TAG", "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
+  esp_vfs_spiffs_conf_t conf = {
+    .base_path = "/spiffs",
+    .partition_label = NULL,
+    .max_files = 5,
+    .format_if_mount_failed = false
+  };
+
+  // Use settings defined above to initialize and mount SPIFFS filesystem.
+  // Note: esp_vfs_spiffs_register is an all-in-one convenience function.
+  ret = esp_vfs_spiffs_register(&conf);
+
+  if (ret != ESP_OK) {
+    if (ret == ESP_FAIL) {
+        ESP_LOGE(TAG, "Failed to mount or format filesystem");
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGE(TAG, "Failed to find SPIFFS partition");
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize SPIFFS (%d)", ret);
+    }
+    return;
+  }
+
+  ESP_LOGI(TAG, "Mount spiffs succeeded.");
+
+  uint32_t tot=0, used=0;
+  esp_spiffs_info(NULL, &tot, &used);
+  ESP_LOGI("TAG", "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
   //sdcard init
   sdmmc_mount(&card);
 
@@ -171,7 +171,7 @@ void app_main() {
 
   esp_register_freertos_tick_hook(lv_tick_task);
   while(1) {
-    vTaskDelay(5 / portTICK_RATE_MS);
+    vTaskDelay(1 / portTICK_RATE_MS);
     lv_task_handler();
   }
 }

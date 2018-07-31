@@ -86,7 +86,7 @@ size_t readProps(FILE *file, wavProperties_t *wavProps){
 
 esp_err_t wavPlay(FILE *wavFile) {
   if(wavFile != NULL) {
-    size_t n, fSize;
+    size_t n, fSize, dOffset = 0;
     long count;
     fseek(wavFile , 0 , SEEK_END);
     fSize = ftell (wavFile);
@@ -135,6 +135,8 @@ esp_err_t wavPlay(FILE *wavFile) {
             ESP_LOGI(TAG, "MUSIC DATA");
             state = DATA;
           }
+          dOffset = ftell(wavFile);
+          playerState.totalTime = (fSize - dOffset) / wavProps.byteRate;
           //set sample rates of i2s to sample rate of wav file
           i2s_set_sample_rates((i2s_port_t)i2s_num, wavProps.sampleRate);
         }
@@ -149,12 +151,12 @@ esp_err_t wavPlay(FILE *wavFile) {
             ESP_LOGI(TAG, "Continued.");
           }
           if(playerState.started == false) {
-            playerState.started = true;
             i2s_zero_dma_buffer(0);
             fclose(wavFile);
             return;
           }
-          // dac_mute(false);
+          playerState.currentTime = (ftell(wavFile) - dOffset) / wavProps.byteRate;
+
           int bytes = wavProps.bitsPerSample / 8 * 2 * 768;
           int16_t *data = malloc(bytes);
           n = readNBytes(wavFile, data, bytes);
@@ -336,7 +338,6 @@ void mp3Play(FILE *mp3File)
           ESP_LOGI(TAG, "Continued.");
         }
         if(playerState.started == false) {
-          playerState.started = true;
           i2s_zero_dma_buffer(0);
           fclose(mp3File);
           return;
@@ -399,6 +400,7 @@ void taskPlay(void *parameter) {
     playerState.musicChanged = true;
     setNowPlaying(playlist_array[nowplay_offset].filePath);
     playerState.filePtr = fopen(playerState.fileName, "rb");
+    ESP_LOGI(TAG, "Now playing: %s", playerState.fileName);
     if(playerState.filePtr != NULL) {
       parseMusicType();
       switch(playerState.musicType) {
@@ -429,6 +431,8 @@ void taskPlay(void *parameter) {
         case PLAYMODE_REPEAT:break;
         default:break;
       }
+    } else {
+      playerState.started = true;
     }
     vTaskDelay(1000 / portTICK_RATE_MS);
   }
@@ -481,10 +485,10 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
       case 1://file
         strcat(path, dirent_p->d_name);
         if(check_music_file(path) != 0) {
-          memset(playlist_array[playlist_len].filePath, 0, sizeof(playlist_array[playlist_len].filePath));
-          sprintf(playlist_array[playlist_len].filePath, "%s/%s", basePath, dirent_p->d_name);
-          ESP_LOGI(TAG, "File found: %s", playlist_array[playlist_len].filePath);
           playlist_len++;
+          memset(playlist_array[playlist_len - 1].filePath, 0, sizeof(playlist_array[playlist_len - 1].filePath));
+          sprintf(playlist_array[playlist_len - 1].filePath, "%s/%s", basePath, dirent_p->d_name);
+          ESP_LOGI(TAG, "File found: %s", playlist_array[playlist_len].filePath);
         }
 
         break;

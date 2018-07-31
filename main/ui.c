@@ -37,7 +37,7 @@ lv_theme_t *th;
 key_event_t key_event;
 int selected = 0;
 lv_obj_t *status_bar, *battery_icon, *battery_text, *volume, *wifi_icon, *playing_icon;
-lv_obj_t *screen;
+lv_obj_t *screen, *home_list, *library_list;
 lv_obj_t *img_cover, *info_obj, *now_playing, *author, *album, *sample_info, *time_text, *time_bar, *playmode;
 lv_style_t status_bar_style, status_bar_icon_style, title_20, style_focused;
 lv_group_t *group;
@@ -172,7 +172,7 @@ static void style_init() {
 
 	lv_style_copy(&title_20, &lv_style_plain);
 	title_20.text.color = LV_COLOR_WHITE;
-	title_20.text.font = &hansans_20_cn;
+	title_20.text.font = &lv_font_dejavu_20;
 }
 
 lv_group_style_mod_func_t style_mod_cb(lv_style_t *style) {
@@ -207,11 +207,15 @@ void taskBattery(void *parameter) {
 	}
 }
 void clear_screen() {
+	lv_group_del(group);
 	lv_obj_clean(screen);
+	group = lv_group_create();
+	lv_indev_set_group(keypad_indev, group);
+	lv_group_set_style_mod_cb(group, style_mod_cb);
 }
 
 void drawHomeScreen() {
-	lv_obj_t *home_list = lv_list_create(screen, NULL);
+	home_list = lv_list_create(screen, NULL);
 	lv_obj_set_size(home_list, 320, 216);
 	lv_list_add(home_list, SYMBOL_AUDIO, "Library", onclick_homelist);
 	lv_list_add(home_list, SYMBOL_IMAGE, "Gallery", onclick_homelist);
@@ -222,11 +226,11 @@ void drawHomeScreen() {
 }
 
 void drawLibrary() {
-	lv_obj_t *library_list = lv_list_create(screen, NULL);
+	library_list = lv_list_create(screen, NULL);
 	lv_obj_set_size(library_list, 320, 216);
 	lv_group_add_obj(group, library_list);
 
-	for(int i = 0; i <= playlist_len; ++i) {
+	for(int i = 0; i < playlist_len; ++i) {
 		lv_list_add(library_list, SYMBOL_AUDIO, playlist_array[i].filePath, onclick_library);
 	}
 
@@ -429,7 +433,6 @@ void wifi_set_stat(bool c) {
 
 static lv_res_t onclick_homelist(lv_obj_t * list_btn) {
 	char *text = lv_list_get_btn_text(list_btn);
-
 	if(strcmp(text, "Library") == 0) {
 		clear_screen();
 		drawLibrary();
@@ -438,16 +441,22 @@ static lv_res_t onclick_homelist(lv_obj_t * list_btn) {
 		clear_screen();
 		drawPlaying();
 		menuID = 4;
+	} else if(strcmp(text, "Settings") == 0) {
+		clear_screen();
+		drawHomeScreen();
+	} else if(strcmp(text, "Gallery") == 0) {
+		clear_screen();
+		drawHomeScreen();
 	}
-
   return LV_RES_OK; /*Return OK because the list is not deleted*/
 }
 
 static lv_res_t onclick_library(lv_obj_t * list_btn) {
 	char *fn = lv_list_get_btn_text(list_btn);
 	ESP_LOGI(TAG, "Now playing: %s", fn);
-	for(int i = 0; i <= nowplay_offset; ++i) {
+	for(int i = 0; i <= playlist_len; ++i) {
 		if(strcmp(playlist_array[i].filePath, fn) == 0){
+			ESP_LOGI(TAG, "nowplay_offset: %i", nowplay_offset);
 			nowplay_offset = i;
 			break;
 		}
