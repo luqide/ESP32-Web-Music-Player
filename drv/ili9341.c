@@ -77,7 +77,7 @@ void ili9431_init(void)
 	//Initialize non-SPI GPIOs
 	gpio_set_direction(ILI9341_DC, GPIO_MODE_OUTPUT);
 	gpio_set_direction(ILI9341_RST, GPIO_MODE_OUTPUT);
-	gpio_set_direction(ILI9341_BCKL, GPIO_MODE_OUTPUT);
+	//gpio_set_direction(ILI9341_BCKL, GPIO_MODE_OUTPUT);
 
 	//Reset the display
 	gpio_set_level(ILI9341_RST, 0);
@@ -101,8 +101,8 @@ void ili9431_init(void)
 	}
 
 	///Enable backlight
-	printf("Enable backlight.\n");
-	gpio_set_level(ILI9341_BCKL, 1);
+	// printf("Enable backlight.\n");
+	// gpio_set_level(ILI9341_BCKL, 1);
 }
 
 void ili9431_fill(int32_t x1, int32_t y1, int32_t x2, int32_t y2, lv_color_t color)

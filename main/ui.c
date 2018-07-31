@@ -229,11 +229,10 @@ void drawLibrary() {
 	library_list = lv_list_create(screen, NULL);
 	lv_obj_set_size(library_list, 320, 216);
 	lv_group_add_obj(group, library_list);
-
+	lv_list_set_anim_time(library_list, 0);
 	for(int i = 0; i < playlist_len; ++i) {
-		lv_list_add(library_list, SYMBOL_AUDIO, playlist_array[i].filePath, onclick_library);
+		lv_list_add(library_list, SYMBOL_AUDIO, playlist_array[i].title, onclick_library);
 	}
-
 	lv_group_focus_obj(library_list);
 }
 
@@ -251,19 +250,17 @@ void drawPlaying() {
 	lv_label_set_style(now_playing, &title_20);
 	lv_obj_set_pos(now_playing, 0, 0);
 	lv_label_set_long_mode(now_playing, LV_LABEL_LONG_SCROLL);
-	lv_label_set_text(now_playing, playerState.fileName);
+	lv_label_set_text(now_playing, playerState.title);
 
 	author = lv_label_create(info_obj, NULL);
 	lv_label_set_style(author, &title_20);
 	lv_obj_set_pos(author, 0, 30);
-	//lv_label_set_text(author, playerState.author);
-	lv_label_set_text(author, "");
+	lv_label_set_text(author, playerState.author);
 	lv_label_set_long_mode(author, LV_LABEL_LONG_SCROLL);
 
 	album = lv_label_create(info_obj, author);
 	lv_obj_set_pos(album, 0, 60);
-	// lv_label_set_text(album, playerState.album);
-	lv_label_set_text(author, "");
+	lv_label_set_text(author, playerState.album);
 	lv_label_set_long_mode(album, LV_LABEL_LONG_SCROLL);
 
 	sample_info = lv_label_create(info_obj, author);
@@ -362,6 +359,14 @@ void taskUI_Char(void *parameter) {
 							clear_screen();
 							drawHomeScreen();
 						break;
+						case LV_GROUP_KEY_RIGHT:
+							for(int i = 0; i < 3; ++i)
+								lv_group_send_data(group, LV_GROUP_KEY_RIGHT);
+						break;
+						case LV_GROUP_KEY_LEFT:
+							for(int i = 0; i < 3; ++i)
+								lv_group_send_data(group, LV_GROUP_KEY_LEFT);
+						break;
 					}
 				}
 			break;
@@ -385,10 +390,14 @@ void taskUI_Char(void *parameter) {
 					lv_bar_set_value(time_bar, (int)((double)playerState.currentTime / (double)playerState.totalTime * 100));
 				else lv_bar_set_value(time_bar, 0);
 
+				memset(tmp_str, 0, sizeof(tmp_str));
+				sprintf(tmp_str, "%iHz %i-Bit", playerState.sampleRate, playerState.bitsPerSample);
+				lv_label_set_text(sample_info, tmp_str);
+
 				if(playerState.musicChanged == true) {
-					lv_label_set_text(now_playing, playerState.fileName);
-					// lv_label_set_text(author, playerState.author);
-					// lv_label_set_text(album, playerState.album);
+					lv_label_set_text(now_playing, playerState.title);
+					lv_label_set_text(author, playerState.author);
+					lv_label_set_text(album, playerState.album);
 					playerState.musicChanged = false;
 				}
 
@@ -454,14 +463,13 @@ static lv_res_t onclick_homelist(lv_obj_t * list_btn) {
 static lv_res_t onclick_library(lv_obj_t * list_btn) {
 	char *fn = lv_list_get_btn_text(list_btn);
 	ESP_LOGI(TAG, "Now playing: %s", fn);
-	for(int i = 0; i <= playlist_len; ++i) {
-		if(strcmp(playlist_array[i].filePath, fn) == 0){
+	for(int i = 0; i < playlist_len; ++i) {
+		if(strcmp(playlist_array[i].title, fn) == 0){
 			ESP_LOGI(TAG, "nowplay_offset: %i", nowplay_offset);
 			nowplay_offset = i;
 			break;
 		}
 	}
-	setNowPlaying(fn);
 	player_pause(false);
 	playerState.started = false;
 

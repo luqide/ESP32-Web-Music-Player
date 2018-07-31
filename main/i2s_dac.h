@@ -18,6 +18,7 @@ typedef enum {
 
 typedef struct {
     char filePath[256];
+    char title[256];
 } playlist_node_t;
 
 extern int playlist_len, nowplay_offset;
@@ -33,7 +34,7 @@ typedef struct {
     uint16_t currentTime;
     int sampleRate;
     int bitsPerSample;
-    char nowPlaying[128];
+    char title[128];
     char author[128];
     char album[128];
     char fileName[128];
@@ -65,7 +66,7 @@ typedef struct {
 
 extern playerState_t playerState;
 
-size_t readNBytes(FILE *file, uint8_t *data, int count);
+size_t readNBytes(FILE *file, void *data, int count);
 size_t read4bytes(FILE *file, uint32_t *chunkId);
 size_t readRiff(FILE *file, wavRiff_t *wavRiff);
 size_t readProps(FILE *file, wavProperties_t *wavProps);
@@ -85,8 +86,7 @@ FILE* musicFileOpen();
 void taskPlay(void *parameter);
 
 int scan_music_file(const char *basePath, int dep_cur, const int dep);
-int parse_music_db_priv(char *db_fn);
-int parse_music_db_next(char *db_fn);
-int create_music_db();
-
+void parse_mp3_info(FILE *mp3File, char *title, char *author, char *album);
+void utf16_to_utf8(char *data, size_t length);
+void utf16be_to_utf8(char *data, size_t length);
 #endif

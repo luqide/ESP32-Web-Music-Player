@@ -30,6 +30,7 @@
 #include "ui.h"
 #include "keypad_control.h"
 #include "mp3dec.h"
+#include "ledc.h"
 
 static EventGroupHandle_t wifi_event_group;
 const int WIFI_CONNECTED_BIT = BIT0;
@@ -84,7 +85,7 @@ void app_main() {
 
   uint32_t tot=0, used=0;
   esp_spiffs_info(NULL, &tot, &used);
-  ESP_LOGI("TAG", "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
+  ESP_LOGI(TAG, "SPIFFS: free %d KB of %d KB\n", (tot-used) / 1024, tot / 1024);
   //sdcard init
   sdmmc_mount(&card);
 
@@ -152,18 +153,15 @@ void app_main() {
     ESP_LOGI(TAG, "UI_Char task created.");
   else ESP_LOGE(TAG, "Failed to create UI_Char task.");
 
-
-  playlist_len = 0;
-  nowplay_offset = 0;
-  playlist_array = heap_caps_malloc(sizeof(playlist_node_t) * 256, MALLOC_CAP_SPIRAM);
-  memset(playlist_array, 0, sizeof(playlist_node_t) * 256);
-  scan_music_file("/sdcard/", 0, 3);
+  ledc_init();
+  if(xTaskCreatePinnedToCore(taskBacklight,"backlight",2000,NULL,(portPRIVILEGE_BIT | 2),NULL,0) == pdPASS)
+    ESP_LOGI(TAG, "Backlight control task created.");
+  else ESP_LOGE(TAG, "Failed to create backlight control task.");
 
   //i2s init
   i2s_init();
   player_pause(false);
   playerState.started = true;
-
 
   if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS)
     ESP_LOGI(TAG, "Music Player task created.");

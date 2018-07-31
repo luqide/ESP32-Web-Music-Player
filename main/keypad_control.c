@@ -22,6 +22,7 @@ QueueHandle_t Queue_Key;
 //bool keyStats[KEY_NUM];
 static const char* TAG = "KEYPAD";
 key_event_t keyEvent;
+TickType_t key_last_tick;
 
 void taskScanKey(void *patameter) {
 	int data;
@@ -37,6 +38,7 @@ void taskScanKey(void *patameter) {
 		else if(data >= 700 && data < 952) {
 			player_pause(!isPaused());
 			while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
+			key_last_tick = xTaskGetTickCount();
 			continue;
 		}
 		else if(data >= 952 && data < 1296) keyEvent.key_name = LV_GROUP_KEY_DOWN;
@@ -52,17 +54,20 @@ void taskScanKey(void *patameter) {
 		last_key = keyEvent.key_name;
 		state = LV_INDEV_STATE_PR;
 		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+		key_last_tick = xTaskGetTickCount();
 		while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
 		//ESP_LOGI(TAG, "key %i released.", keyEvent.key_name);
 		keyEvent.state = KEY_RELEASED;
 		state = LV_INDEV_STATE_REL;
 		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+		key_last_tick = xTaskGetTickCount();
 		vTaskDelay(10 / portTICK_RATE_MS);
 	}
 
 }
 
 esp_err_t keyQueueCreate() {
+	key_last_tick = xTaskGetTickCount();
 	Queue_Key = xQueueCreate(16, sizeof(key_event_t));
 	if(Queue_Key == 0) return ESP_FAIL;
 

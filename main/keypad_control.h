@@ -13,6 +13,7 @@ typedef struct {
 	lv_indev_state_t state;
 } key_event_t;
 
+extern TickType_t key_last_tick;
 extern lv_indev_t *keypad_indev;
 extern QueueHandle_t Queue_Key;
 void taskScanKey(void *parameter);

@@ -53,7 +53,7 @@ playerState_t playerState = {
   .started = false,
   .totalTime = 0,
   .currentTime = 0,
-  .nowPlaying = "",
+  .title = "",
   .author = "",
   .album = "",
   .playMode = PLAYMODE_REPEAT_PLAYLIST,
@@ -69,7 +69,7 @@ size_t read4bytes(FILE *file, uint32_t *chunkId){
   return n;
 }
 
-size_t readNBytes(FILE *file, uint8_t *data, int count){
+size_t readNBytes(FILE *file, void *data, int count){
   size_t n = fread((uint8_t *)data, sizeof(uint8_t), count, file);
   return n;
 }
@@ -87,7 +87,6 @@ size_t readProps(FILE *file, wavProperties_t *wavProps){
 esp_err_t wavPlay(FILE *wavFile) {
   if(wavFile != NULL) {
     size_t n, fSize, dOffset = 0;
-    long count;
     fseek(wavFile , 0 , SEEK_END);
     fSize = ftell (wavFile);
     ESP_LOGI(TAG, "Wav play");
@@ -139,6 +138,8 @@ esp_err_t wavPlay(FILE *wavFile) {
           playerState.totalTime = (fSize - dOffset) / wavProps.byteRate;
           //set sample rates of i2s to sample rate of wav file
           i2s_set_sample_rates((i2s_port_t)i2s_num, wavProps.sampleRate);
+          playerState.sampleRate = wavProps.sampleRate;
+          playerState.bitsPerSample = wavProps.bitsPerSample;
         }
         break;
         /* after processing wav file, it is time to process music data */
@@ -153,7 +154,7 @@ esp_err_t wavPlay(FILE *wavFile) {
           if(playerState.started == false) {
             i2s_zero_dma_buffer(0);
             fclose(wavFile);
-            return;
+            return ESP_FAIL;
           }
           playerState.currentTime = (ftell(wavFile) - dOffset) / wavProps.byteRate;
 
@@ -191,7 +192,7 @@ esp_err_t i2s_init() {
   i2s_set_pin((i2s_port_t)i2s_num, &pin_config);
   REG_WRITE(PIN_CTRL, 0xFFFFFFF0);
   PIN_FUNC_SELECT(GPIO_PIN_REG_0, 1);
-  memset(playerState.nowPlaying, 0, sizeof(playerState.nowPlaying));
+  memset(playerState.fileName, 0, sizeof(playerState.fileName));
   return ESP_OK;
 }
 
@@ -250,7 +251,7 @@ bool isPaused() {
 }
 
 FILE* musicFileOpen() {
-  return fopen(playerState.nowPlaying, "rb");
+  return fopen(playerState.fileName, "rb");
 }
 
 int getVolumePercentage() {
@@ -294,31 +295,6 @@ void mp3Play(FILE *mp3File)
       if (memcmp(tag,"ID3",3) == 0) {
         tag_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
           // ESP_LOGI(TAG,"tag_len: %d %x %x %x %x", tag_len,tag[6],tag[7],tag[8],tag[9]);
-        while(ftell(mp3File) <= tag_len) {
-          read_bytes = fread(tag, 1, 10, mp3File);
-          int frame_len = 0;
-          if(read_bytes == 10) {
-            frame_len = (tag[4] << 24)|(tag[5] << 16)|(tag[6] << 8)|tag[7];
-            char FrameID[5] = "", *FrameData;
-            for(int i = 0; i < 4; ++i) FrameID[i] = tag[i];
-            if(!strcmp(FrameID, "TIT2")) {
-              ESP_LOGI(TAG, "FrameID: %s", FrameID);
-              FrameData = playerState.nowPlaying;
-            } else if(!strcmp(FrameID, "TPE1")) {
-              ESP_LOGI(TAG, "FrameID: %s", FrameID);
-              FrameData = playerState.author;
-            } else if(!strcmp(FrameID, "TALB")) {
-              ESP_LOGI(TAG, "FrameID: %s", FrameID);
-              FrameData = playerState.album;
-            } else {
-              fseek(mp3File, frame_len, SEEK_CUR);
-              continue;
-            }
-            fseek(mp3File, 3, SEEK_CUR);
-            fread(FrameData, 1, frame_len - 3, mp3File);
-            ESP_LOGI(TAG, "FrameData: %s", FrameData);
-          }
-        }
        }
       else {
         ESP_LOGE(TAG, "Not an mp3 file.");
@@ -326,9 +302,7 @@ void mp3Play(FILE *mp3File)
       }
      }
      fseek(mp3File, tag_len, SEEK_SET);
-     unsigned char* input = &readBuf[0];
      int bytesLeft = 0;
-     int outOfData = 0;
      unsigned char* readPtr = readBuf;
      while (1) {
         if(playerState.paused == true) {
@@ -396,22 +370,29 @@ void mp3Play(FILE *mp3File)
 }
 
 void taskPlay(void *parameter) {
+  playlist_len = 0;
+  nowplay_offset = 0;
+  playlist_array = heap_caps_malloc(sizeof(playlist_node_t) * 256, MALLOC_CAP_SPIRAM);
+  memset(playlist_array, 0, sizeof(playlist_node_t) * 256);
+  scan_music_file("/sdcard/", 0, 3);
+  ESP_LOGI(TAG, "Music scanning completed.");
   while(1) {
     playerState.musicChanged = true;
     setNowPlaying(playlist_array[nowplay_offset].filePath);
+    strcpy(playerState.title, playlist_array[nowplay_offset].title);
     playerState.filePtr = fopen(playerState.fileName, "rb");
-    ESP_LOGI(TAG, "Now playing: %s", playerState.fileName);
+    memset(playerState.author, 0, sizeof(playerState.author));
+    memset(playerState.album, 0, sizeof(playerState.album));
+    parse_mp3_info(playerState.filePtr, NULL, playerState.author, playerState.album);
     if(playerState.filePtr != NULL) {
       parseMusicType();
       switch(playerState.musicType) {
         case WAV:
           wavPlay(playerState.filePtr);
         break;
-
         case MP3:
           mp3Play(playerState.filePtr);
         break;
-
         default:break;
       }
       fclose(playerState.filePtr);
@@ -434,18 +415,8 @@ void taskPlay(void *parameter) {
     } else {
       playerState.started = true;
     }
-    vTaskDelay(1000 / portTICK_RATE_MS);
+    vTaskDelay(800 / portTICK_RATE_MS);
   }
-}
-
-int parse_music_db_priv(char *db_fn) {
-
-  return 0;
-}
-
-int parse_music_db_next(char *db_fn) {
-
-  return 0;
 }
 
 static int check_music_file(char* filename) {
@@ -463,11 +434,12 @@ static int check_music_file(char* filename) {
 }
 
 int scan_music_file(const char *basePath, int dep_cur, const int dep) {
-  ESP_LOGI(TAG, "Scan path: %s", basePath);
   if(dep == dep_cur) return 0;
   DIR *dir_p;
   struct dirent *dirent_p;
+  FILE *file_p;
   char path[256];
+  int type = 0;
   memset(path, 0, sizeof(path));
   strcpy(path, basePath);
 
@@ -484,11 +456,16 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
     switch(dirent_p->d_type) {
       case 1://file
         strcat(path, dirent_p->d_name);
-        if(check_music_file(path) != 0) {
+        type = check_music_file(path);
+        if(type != 0) {
           playlist_len++;
-          memset(playlist_array[playlist_len - 1].filePath, 0, sizeof(playlist_array[playlist_len - 1].filePath));
           sprintf(playlist_array[playlist_len - 1].filePath, "%s/%s", basePath, dirent_p->d_name);
-          ESP_LOGI(TAG, "File found: %s", playlist_array[playlist_len].filePath);
+          file_p = fopen(playlist_array[playlist_len - 1].filePath, "rb");
+          if(type == 1)
+            parse_mp3_info(file_p, playlist_array[playlist_len - 1].title, NULL, NULL);
+          else if(type == 2)
+            memcpy(playlist_array[playlist_len - 1].title, playlist_array[playlist_len - 1].filePath, 256);
+          fclose(file_p);
         }
 
         break;
@@ -506,9 +483,147 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
   return 0;
 }
 
-int create_music_db() {
-  if(!sdmmc_is_valid())
-    return -1;
+void parse_mp3_info(FILE *mp3File, char *title, char *author, char *album) {
+    if(mp3File == NULL) return;
+    rewind(mp3File);
+    int tag_len = 0;
+    char tag[10];
+    int read_bytes = fread(tag, 1, 10, mp3File);
+    if(read_bytes == 10) {
+      if (memcmp(tag,"ID3",3) == 0) {
+        tag_len = ((tag[6] & 0x7F)<< 21)|((tag[7] & 0x7F) << 14) | ((tag[8] & 0x7F) << 7) | (tag[9] & 0x7F);
+        while(ftell(mp3File) <= tag_len) {
+          read_bytes = fread(tag, 1, 10, mp3File);
+          int frame_len = 0;
+          if(read_bytes == 10) {
+            frame_len = (tag[4] << 24)|(tag[5] << 16)|(tag[6] << 8)|tag[7];
+            char FrameID[5] = "", *FrameData = NULL;
+            for(int i = 0; i < 4; ++i) FrameID[i] = tag[i];
+            if(!strcmp(FrameID, "TIT2")) {
+              FrameData = title;
+            } else if(!strcmp(FrameID, "TPE1")) {
+              FrameData = author;
+            } else if(!strcmp(FrameID, "TALB")) {
+              FrameData = album;
+            } else {
+              fseek(mp3File, frame_len, SEEK_CUR);
+              continue;
+            }
+            if(FrameData == NULL) {
+              fseek(mp3File, frame_len, SEEK_CUR);
+              continue;
+            }
+            uint8_t code = 0x0;
+            fread(&code, 1, 1, mp3File);
+            fread(FrameData, 1, frame_len - 1, mp3File);
+            switch(code) {
+              case 0x00:break;//iso-8859-1
+              case 0x01:utf16_to_utf8(FrameData, frame_len - 1);break;
+              case 0x02:utf16be_to_utf8(FrameData, frame_len - 1);break;
+              case 0x03:break;
+              default:break;
+            }
+          }
+        }
+      }
+      else {
+        return;
+      }
+    }
+}
 
-  return 0;
+void utf16_to_utf8(char *data, size_t length) {
+  if(data[0] != 0xFF || data[1] != 0xFE) {
+    ESP_LOGE(TAG, "Not utf16");
+    return;
+  }
+  int len = length,oOffset = 0;
+  uint16_t tmp[256];
+  uint32_t unicode = 0;
+  memset(tmp, 0, sizeof(tmp));
+  for(int i = 2; i < len; i += 2) {
+    tmp[(i - 2) / 2] = ((uint16_t)data[i + 1] << 8) | data[i];
+  }
+  len = (len - 2) / 2;
+  memset(data, 0, sizeof(char) * length);
+  for(int i = 0; i < len; ++i) {
+    if(tmp[i] < 0xD800 || tmp[i] > 0xDFFF) unicode = tmp[i];
+    else if(tmp[i] >= 0xD800 && tmp[i] <= 0xDBFF
+            && i != len - 1 && tmp[i+1] >= 0xDC00
+            && tmp[i+1] <= 0xDFFF) {
+      unicode = ((((tmp[i] - 0xD800) & 0x3FF) << 10) | ((tmp[i+1] - 0xDC00) & 0x3FF)) + 0x10000;
+      i++;
+    } else {
+      continue;
+    }
+
+    if(unicode <= 0x7F) {
+      data[oOffset] = unicode & 0x7F;
+      oOffset++;
+    } else if(unicode <= 0x7FF) {
+      data[oOffset] = ((unicode & 0x7C0) >> 6) | 0xC0;
+      data[oOffset + 1] = (unicode & 0x3F) | 0x80;
+      oOffset += 2;
+    } else if(unicode <= 0xFFFF) {
+      data[oOffset] = ((unicode & 0xF000) >> 12) | 0xE0;
+      data[oOffset + 1] = ((unicode & 0xFC0) >> 6) | 0x80;
+      data[oOffset + 2] = (unicode & 0x3F) | 0x80;
+      oOffset += 3;
+    } else {
+      data[oOffset] = ((unicode & 0x1C0000) >> 18) | 0xF0;
+      data[oOffset + 1] = ((unicode & 0x3F000) >> 12) | 0x80;
+      data[oOffset + 2] = ((unicode & 0xFC0) >> 6) | 0x80;
+      data[oOffset + 3] = (unicode & 0x3F) | 0x80;
+      oOffset += 4;
+    }
+
+  }
+}
+
+void utf16be_to_utf8(char *data, size_t length) {
+  if(data[0] != 0xFE || data[1] != 0xFF) {
+    ESP_LOGE(TAG, "Not utf16be");
+    return;
+  }
+  int len = length,oOffset = 0;
+  uint16_t tmp[256];
+  uint32_t unicode = 0;
+  memset(tmp, 0, sizeof(tmp));
+  for(int i = 2; i < len; i += 2) {
+    tmp[(i - 2) / 2] = ((uint16_t)data[i] << 8) | data[i + 1];
+  }
+  len = (len - 2) / 2;
+  memset(data, 0, sizeof(char) * length);
+  for(int i = 0; i < len; ++i) {
+    if(tmp[i] < 0xD800 || tmp[i] > 0xDFFF) unicode = tmp[i];
+    else if(tmp[i] >= 0xD800 && tmp[i] <= 0xDBFF
+            && i != len - 1 && tmp[i+1] >= 0xDC00
+            && tmp[i+1] <= 0xDFFF) {
+      unicode = ((((tmp[i] - 0xD800) & 0x3FF) << 10) | ((tmp[i+1] - 0xDC00) & 0x3FF)) + 0x10000;
+      i++;
+    } else {
+      continue;
+    }
+
+    if(unicode <= 0x7F) {
+      data[oOffset] = unicode & 0x7F;
+      oOffset++;
+    } else if(unicode <= 0x7FF) {
+      data[oOffset] = ((unicode & 0x7C0) >> 6) | 0xC0;
+      data[oOffset + 1] = (unicode & 0x3F) | 0x80;
+      oOffset += 2;
+    } else if(unicode <= 0xFFFF) {
+      data[oOffset] = ((unicode & 0xF000) >> 12) | 0xE0;
+      data[oOffset + 1] = ((unicode & 0xFC0) >> 6) | 0x80;
+      data[oOffset + 2] = (unicode & 0x3F) | 0x80;
+      oOffset += 3;
+    } else {
+      data[oOffset] = ((unicode & 0x1C0000) >> 18) | 0xF0;
+      data[oOffset + 1] = ((unicode & 0x3F000) >> 12) | 0x80;
+      data[oOffset + 2] = ((unicode & 0xFC0) >> 6) | 0x80;
+      data[oOffset + 3] = (unicode & 0x3F) | 0x80;
+      oOffset += 4;
+    }
+
+  }
 }
