@@ -11,18 +11,14 @@
 #define PLAYMODE_REPEAT_PLAYLIST 1
 #define PLAYMODE_PLAYLIST 2
 #define PLAYMODE_RANDOM 3
-#define MAX_MUSICDB_NUM 16
+
+#define MUSICDB_FN_LEN 128
+#define MUSICDB_TITLE_LEN 128
 typedef enum {
     NONE = 0, WAV, MP3, APE, FLAC
 } musicType_t;
 
-typedef struct {
-    char filePath[256];
-    char title[256];
-} playlist_node_t;
-
-extern int playlist_len, nowplay_offset;
-extern playlist_node_t *playlist_array;
+extern int playlist_len, nowplay_offset, list_offset;
 /* these are data structures to process wav file */
 typedef enum {
     HEADER_RIFF, HEADER_FMT, HEADER_DATA, DATA
@@ -85,7 +81,7 @@ bool isPaused();
 FILE* musicFileOpen();
 void taskPlay(void *parameter);
 
-int scan_music_file(const char *basePath, int dep_cur, const int dep);
+int scan_music_file(const char *basePath, int dep_cur, const int dep, FILE *db);
 void parse_mp3_info(FILE *mp3File, char *title, char *author, char *album);
 void utf16_to_utf8(char *data, size_t length);
 void utf16be_to_utf8(char *data, size_t length);

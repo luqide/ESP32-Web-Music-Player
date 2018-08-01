@@ -163,13 +163,13 @@ void app_main() {
   player_pause(false);
   playerState.started = true;
 
-  if(xTaskCreatePinnedToCore(taskPlay,"Player",4096,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS)
+  if(xTaskCreatePinnedToCore(taskPlay,"Player",10000,NULL,(portPRIVILEGE_BIT | 3),&uiHandle,1) == pdPASS)
     ESP_LOGI(TAG, "Music Player task created.");
   else ESP_LOGE(TAG, "Failed to create Player task.");
 
   esp_register_freertos_tick_hook(lv_tick_task);
   while(1) {
-    vTaskDelay(1 / portTICK_RATE_MS);
+    vTaskDelay(5 / portTICK_RATE_MS);
     lv_task_handler();
   }
 }
@@ -183,6 +183,10 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event) {
           wifi_set_stat(true);
           ESP_LOGI(TAG, "got ip:%s",
                    ip4addr_ntoa(&event->event_info.got_ip.ip_info.ip));
+          wifi_ap_record_t wifidata;
+          if (esp_wifi_sta_get_ap_info(&wifidata)==0){
+            ESP_LOGI(TAG, "rssi:%d", wifidata.rssi);
+          }
           xEventGroupSetBits(wifi_event_group, WIFI_CONNECTED_BIT);
           break;
       case SYSTEM_EVENT_AP_STACONNECTED:

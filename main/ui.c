@@ -230,8 +230,17 @@ void drawLibrary() {
 	lv_obj_set_size(library_list, 320, 216);
 	lv_group_add_obj(group, library_list);
 	lv_list_set_anim_time(library_list, 0);
-	for(int i = 0; i < playlist_len; ++i) {
-		lv_list_add(library_list, SYMBOL_AUDIO, playlist_array[i].title, onclick_library);
+	char tmp_title[MUSICDB_TITLE_LEN];
+	FILE *db = fopen("/sdcard/music_list.db", "rb");
+	lv_obj_t *btn;
+	if(db != NULL) {
+		for(int i = list_offset; i < list_offset + 4; ++i) {
+			fseek(db, i * (MUSICDB_FN_LEN + MUSICDB_TITLE_LEN) + MUSICDB_FN_LEN, SEEK_SET);
+			fread(tmp_title, 1, MUSICDB_TITLE_LEN, db);
+			btn = lv_list_add(library_list, SYMBOL_AUDIO, tmp_title, onclick_library);
+			lv_label_set_long_mode(lv_list_get_btn_label(btn), LV_LABEL_LONG_BREAK);
+		}
+		fclose(db);
 	}
 	lv_group_focus_obj(library_list);
 }
@@ -359,13 +368,19 @@ void taskUI_Char(void *parameter) {
 							clear_screen();
 							drawHomeScreen();
 						break;
-						case LV_GROUP_KEY_RIGHT:
-							for(int i = 0; i < 3; ++i)
-								lv_group_send_data(group, LV_GROUP_KEY_RIGHT);
+						case LV_GROUP_KEY_NEXT:
+							list_offset += 4;
+							if(list_offset >= playlist_len - 4 - 1)
+								list_offset = playlist_len - 4 - 1;
+							clear_screen();
+							drawLibrary();
 						break;
-						case LV_GROUP_KEY_LEFT:
-							for(int i = 0; i < 3; ++i)
-								lv_group_send_data(group, LV_GROUP_KEY_LEFT);
+						case LV_GROUP_KEY_PREV:
+							list_offset -= 4;
+							if(list_offset <= 3)
+								list_offset = 0;
+							clear_screen();
+							drawLibrary();
 						break;
 					}
 				}
@@ -411,15 +426,35 @@ void taskUI_Char(void *parameter) {
 							if(getVolumePercentage() <= 10) setVolume(0);
 							else setVolume(getVolumePercentage() - 10);
 						break;
-						case LV_GROUP_KEY_LEFT:
+						case LV_GROUP_KEY_PREV:
 							playerState.started = false;
-							nowplay_offset--;
-							if(nowplay_offset < 0) nowplay_offset = playlist_len;
+							switch(playerState.playMode) {
+				        case PLAYMODE_RANDOM:
+				          srand(time(NULL));
+				          nowplay_offset = rand() % playlist_len;
+				        break;
+				        case PLAYMODE_REPEAT_PLAYLIST:
+				          nowplay_offset++;
+				          if(nowplay_offset > playlist_len) nowplay_offset = 0;
+				        break;
+				        case PLAYMODE_REPEAT:break;
+				        default:break;
+				      }
 						break;
-						case LV_GROUP_KEY_RIGHT:
+						case LV_GROUP_KEY_NEXT:
 							playerState.started = false;
-							nowplay_offset++;
-							if(nowplay_offset > playlist_len) nowplay_offset = 0;
+							switch(playerState.playMode) {
+				        case PLAYMODE_RANDOM:
+				          srand(time(NULL));
+				          nowplay_offset = rand() % playlist_len;
+				        break;
+				        case PLAYMODE_REPEAT_PLAYLIST:
+				          nowplay_offset--;
+				          if(nowplay_offset < 0) nowplay_offset = playlist_len - 1;
+				        break;
+				        case PLAYMODE_REPEAT:break;
+				        default:break;
+				      }
 						break;
 						case LV_GROUP_KEY_ESC:
 							menuID = 0;
@@ -461,11 +496,13 @@ static lv_res_t onclick_homelist(lv_obj_t * list_btn) {
 }
 
 static lv_res_t onclick_library(lv_obj_t * list_btn) {
-	char *fn = lv_list_get_btn_text(list_btn);
+	char *fn = lv_list_get_btn_text(list_btn), tmp_title[MUSICDB_TITLE_LEN];
 	ESP_LOGI(TAG, "Now playing: %s", fn);
-	for(int i = 0; i < playlist_len; ++i) {
-		if(strcmp(playlist_array[i].title, fn) == 0){
-			ESP_LOGI(TAG, "nowplay_offset: %i", nowplay_offset);
+	FILE *db = fopen("/sdcard/music_list.db", "rb");
+	for(int i = list_offset; i < list_offset + 4; ++i) {
+		fseek(db, i * (MUSICDB_FN_LEN + MUSICDB_TITLE_LEN) + MUSICDB_FN_LEN, SEEK_SET);
+		fread(tmp_title, 1, MUSICDB_TITLE_LEN, db);
+		if(strcmp(tmp_title, fn) == 0) {
 			nowplay_offset = i;
 			break;
 		}

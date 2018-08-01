@@ -7,6 +7,7 @@
 #define LEDC_CHANNEL        LEDC_CHANNEL_0
 
 extern uint8_t backlight_duty;
+extern TickType_t backlight_timeout;
 void ledc_init(void);
 void taskBacklight(void *parameter);
 

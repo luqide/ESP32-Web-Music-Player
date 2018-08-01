@@ -10,8 +10,8 @@
 #include "esp_log.h"
 #include "../lvgl/lv_core/lv_group.h"
 #include "../lvgl/lv_core/lv_indev.h"
-
 #include "i2s_dac.h"
+#include "ledc.h"
 
 #include "keypad_control.h"
 
@@ -19,8 +19,7 @@ lv_indev_t *keypad_indev;
 static uint32_t last_key;
 static lv_indev_state_t state;
 QueueHandle_t Queue_Key;
-//bool keyStats[KEY_NUM];
-static const char* TAG = "KEYPAD";
+//static const char* TAG = "KEYPAD";
 key_event_t keyEvent;
 TickType_t key_last_tick;
 
@@ -32,9 +31,9 @@ void taskScanKey(void *patameter) {
 		data = adc1_get_raw(ADC1_CHANNEL_3);
 		data = (int)((double)data / 4096.0 * 2200);
 
-		if(data > 0 && data < 225) keyEvent.key_name = LV_GROUP_KEY_RIGHT;
+		if(data > 0 && data < 225) keyEvent.key_name = LV_GROUP_KEY_NEXT;
 		else if(data >= 225 && data < 476) keyEvent.key_name = LV_GROUP_KEY_UP;
-		else if(data >= 476 && data < 700) keyEvent.key_name = LV_GROUP_KEY_LEFT;
+		else if(data >= 476 && data < 700) keyEvent.key_name = LV_GROUP_KEY_PREV;
 		else if(data >= 700 && data < 952) {
 			player_pause(!isPaused());
 			while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
@@ -48,20 +47,21 @@ void taskScanKey(void *patameter) {
 			vTaskDelay(10 / portTICK_RATE_MS);
 			continue;
 		}
-
-		keyEvent.state = LV_INDEV_STATE_PR;
-		//ESP_LOGI(TAG, "key %i pressed.", keyEvent.key_name);
-		last_key = keyEvent.key_name;
-		state = LV_INDEV_STATE_PR;
-		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+		if(xTaskGetTickCount() - key_last_tick < backlight_timeout || backlight_timeout == 0) {
+			keyEvent.state = LV_INDEV_STATE_PR;
+			//ESP_LOGI(TAG, "key %i pressed.", keyEvent.key_name);
+			last_key = keyEvent.key_name;
+			state = LV_INDEV_STATE_PR;
+			xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+			while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
+			//ESP_LOGI(TAG, "key %i released.", keyEvent.key_name);
+			keyEvent.state = KEY_RELEASED;
+			state = LV_INDEV_STATE_REL;
+			xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
+			key_last_tick = xTaskGetTickCount();
+			vTaskDelay(10 / portTICK_RATE_MS);
+		}
 		key_last_tick = xTaskGetTickCount();
-		while(adc1_get_raw(ADC1_CHANNEL_3) != 0) vTaskDelay(10 / portTICK_RATE_MS);
-		//ESP_LOGI(TAG, "key %i released.", keyEvent.key_name);
-		keyEvent.state = KEY_RELEASED;
-		state = LV_INDEV_STATE_REL;
-		xQueueSend(Queue_Key, (void*)(&keyEvent), (TickType_t) 10);
-		key_last_tick = xTaskGetTickCount();
-		vTaskDelay(10 / portTICK_RATE_MS);
 	}
 
 }

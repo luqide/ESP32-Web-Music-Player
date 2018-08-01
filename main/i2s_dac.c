@@ -22,8 +22,7 @@
 static const char *TAG = "CODEC";
 headerState_t state = HEADER_RIFF;
 wavProperties_t wavProps;
-int playlist_len, nowplay_offset;
-playlist_node_t *playlist_array;
+int playlist_len, nowplay_offset, list_offset;
 
 //i2s configuration
 i2s_config_t i2s_config = {
@@ -56,7 +55,7 @@ playerState_t playerState = {
   .title = "",
   .author = "",
   .album = "",
-  .playMode = PLAYMODE_REPEAT_PLAYLIST,
+  .playMode = PLAYMODE_RANDOM,
   .volume = 50,
   .volumeMultiplier = pow(10, -25 / 20.0),
   .musicType = NONE,
@@ -370,16 +369,32 @@ void mp3Play(FILE *mp3File)
 }
 
 void taskPlay(void *parameter) {
-  playlist_len = 0;
   nowplay_offset = 0;
-  playlist_array = heap_caps_malloc(sizeof(playlist_node_t) * 256, MALLOC_CAP_SPIRAM);
-  memset(playlist_array, 0, sizeof(playlist_node_t) * 256);
-  scan_music_file("/sdcard/", 0, 3);
-  ESP_LOGI(TAG, "Music scanning completed.");
+  list_offset = 0;
+  FILE *db = fopen("/sdcard/music_list.db", "r");
+  if(db == NULL) {
+    fclose(db);
+    db = fopen("/sdcard/music_list.db", "wb");
+    scan_music_file("/sdcard/", 0, 3, db);
+    fflush(db);
+    playlist_len = ftell(db) / (MUSICDB_FN_LEN + MUSICDB_TITLE_LEN);
+    fclose(db);
+  } else {
+    fseek(db, 0, SEEK_END);
+    playlist_len = ftell(db) / (MUSICDB_FN_LEN + MUSICDB_TITLE_LEN);
+    fclose(db);
+  }
+  ESP_LOGI(TAG, "Music scanning completed.Playlist length: %d", playlist_len);
   while(1) {
     playerState.musicChanged = true;
-    setNowPlaying(playlist_array[nowplay_offset].filePath);
-    strcpy(playerState.title, playlist_array[nowplay_offset].title);
+    char tmp_fn[MUSICDB_FN_LEN], tmp_title[MUSICDB_TITLE_LEN];
+    db = fopen("/sdcard/music_list.db", "rb");
+    fseek(db, nowplay_offset * (MUSICDB_FN_LEN + MUSICDB_TITLE_LEN), SEEK_SET);
+    fread(tmp_fn, 1, MUSICDB_FN_LEN, db);
+    fread(tmp_title, 1, MUSICDB_TITLE_LEN, db);
+    fclose(db);
+    setNowPlaying(tmp_fn);
+    strcpy(playerState.title, tmp_title);
     playerState.filePtr = fopen(playerState.fileName, "rb");
     memset(playerState.author, 0, sizeof(playerState.author));
     memset(playerState.album, 0, sizeof(playerState.album));
@@ -403,7 +418,7 @@ void taskPlay(void *parameter) {
       switch(playerState.playMode) {
         case PLAYMODE_RANDOM:
           srand(time(NULL));
-          nowplay_offset = rand() % (playlist_len + 1);
+          nowplay_offset = rand() % playlist_len;
         break;
         case PLAYMODE_REPEAT_PLAYLIST:
           nowplay_offset++;
@@ -433,8 +448,9 @@ static int check_music_file(char* filename) {
   return 0;
 }
 
-int scan_music_file(const char *basePath, int dep_cur, const int dep) {
+int scan_music_file(const char *basePath, int dep_cur, const int dep, FILE *db) {
   if(dep == dep_cur) return 0;
+  if(db == NULL) return -1;
   DIR *dir_p;
   struct dirent *dirent_p;
   FILE *file_p;
@@ -442,6 +458,7 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
   int type = 0;
   memset(path, 0, sizeof(path));
   strcpy(path, basePath);
+  char tmp_title[MUSICDB_TITLE_LEN], tmp_fn[MUSICDB_FN_LEN];
 
   dir_p = opendir(basePath);
   if(dir_p == NULL) {
@@ -459,20 +476,24 @@ int scan_music_file(const char *basePath, int dep_cur, const int dep) {
         type = check_music_file(path);
         if(type != 0) {
           playlist_len++;
-          sprintf(playlist_array[playlist_len - 1].filePath, "%s/%s", basePath, dirent_p->d_name);
-          file_p = fopen(playlist_array[playlist_len - 1].filePath, "rb");
+          memset(tmp_title, 0, sizeof(tmp_title));
+          memset(tmp_fn, 0, sizeof(tmp_fn));
+          sprintf(tmp_fn, "%s/%s", basePath, dirent_p->d_name);
+          file_p = fopen(tmp_fn, "rb");
           if(type == 1)
-            parse_mp3_info(file_p, playlist_array[playlist_len - 1].title, NULL, NULL);
+            parse_mp3_info(file_p, tmp_title, NULL, NULL);
           else if(type == 2)
-            memcpy(playlist_array[playlist_len - 1].title, playlist_array[playlist_len - 1].filePath, 256);
+            memcpy(tmp_title, tmp_fn, MUSICDB_TITLE_LEN);
           fclose(file_p);
+          fwrite(tmp_fn, 1, MUSICDB_FN_LEN, db);
+          fwrite(tmp_title, 1, MUSICDB_TITLE_LEN, db);
         }
 
         break;
       case 2:
         strcat(path, dirent_p->d_name);
         //strcat(path, "/");
-        scan_music_file(path, dep_cur + 1, dep);
+        scan_music_file(path, dep_cur + 1, dep, db);
         break;
       default:break;
     }

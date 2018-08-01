@@ -10,12 +10,12 @@
 #include "ledc.h"
 
 uint8_t backlight_duty;
-uint32_t backlight_timeout;
+TickType_t backlight_timeout;
 void ledc_init() {
   gpio_set_direction(LEDC_GPIO, GPIO_MODE_OUTPUT);
   gpio_set_level(LEDC_GPIO, 0);
   backlight_duty = 100;
-  backlight_timeout = 0 * 1000 / portTICK_RATE_MS;//ms
+  backlight_timeout = 15 * 1000 / portTICK_RATE_MS;//ms
   ledc_timer_config_t ledc_timer = {
       .duty_resolution = LEDC_TIMER_13_BIT, // resolution of PWM duty
       .freq_hz = 2000,                      // frequency of PWM signal
