@@ -6,7 +6,7 @@ ESP32-Web-Music-Player
 Todo:
 -----
 - [x] ili9341 显示驱动
-- [ ] 图形库 -> 界面库
+- [x] 图形库 -> 界面库
 - [x] microSD卡驱动
 - [x] 按键处理
 - [x] I2S DAC驱动
